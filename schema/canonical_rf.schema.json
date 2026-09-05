@@ -1,0 +1,314 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rf-slm.local/schema/canonical_rf.schema.json",
+  "title": "Canonical RF Telemetry Snapshot",
+  "description": "Vendor-neutral representation of a single radio's RF state at a point in time. Every vendor adapter MUST normalize into this shape. The SLM never sees vendor-native output.",
+  "type": "object",
+  "required": ["snapshot_id", "timestamp", "radio", "rf_metrics"],
+  "additionalProperties": false,
+
+  "properties": {
+    "snapshot_id": {
+      "type": "string",
+      "description": "Opaque unique id for this snapshot."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 UTC timestamp of collection."
+    },
+    "source": {
+      "type": "object",
+      "description": "Provenance only. MUST NOT be passed to the model — used for audit and for optional vendor-syntax post-processing.",
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "type": "string",
+          "description": "Adapter that produced this record, e.g. cisco_c9800, aruba_central, mist, generic_csv."
+        },
+        "collection_method": {
+          "type": "string",
+          "enum": ["cli", "restconf", "rest_api", "snmp", "streaming_telemetry", "file_upload", "synthetic"]
+        },
+        "raw_ref": {
+          "type": "string",
+          "description": "Pointer to the archived raw payload."
+        }
+      }
+    },
+
+    "site": {
+      "type": "object",
+      "description": "Deployment context. Influences expected client density and interference profile.",
+      "additionalProperties": false,
+      "properties": {
+        "site_id": { "type": "string" },
+        "environment": {
+          "type": "string",
+          "enum": ["office", "warehouse", "healthcare", "education", "retail", "manufacturing", "hospitality", "outdoor", "high_density_venue", "unknown"],
+          "default": "unknown"
+        },
+        "ap_group": { "type": "string" },
+        "floor": { "type": "string" }
+      }
+    },
+
+    "radio": {
+      "type": "object",
+      "description": "Configuration and identity of the radio under diagnosis.",
+      "required": ["band", "channel", "channel_width_mhz"],
+      "additionalProperties": false,
+      "properties": {
+        "ap_id": { "type": "string" },
+        "radio_id": { "type": "string" },
+        "band": {
+          "type": "string",
+          "enum": ["2.4GHz", "5GHz", "6GHz"]
+        },
+        "channel": {
+          "type": "integer",
+          "description": "Primary channel number in the band's numbering scheme."
+        },
+        "channel_width_mhz": {
+          "type": "integer",
+          "enum": [20, 40, 80, 160, 320]
+        },
+        "operating_class": {
+          "type": "integer",
+          "description": "IEEE 802.11 global operating class. Preferred over vendor band labels where available."
+        },
+        "tx_power_dbm": { "type": "number" },
+        "tx_power_max_dbm": {
+          "type": "number",
+          "description": "Regulatory or hardware ceiling. Needed to detect TPC headroom exhaustion."
+        },
+        "power_mode": {
+          "type": "string",
+          "enum": ["LPI", "SP", "VLP", "standard", "n/a"],
+          "default": "n/a",
+          "description": "6 GHz power class. LPI = Low Power Indoor, SP = Standard Power (AFC-governed), VLP = Very Low Power."
+        },
+        "regulatory_domain": {
+          "type": "string",
+          "description": "ISO 3166-1 alpha-2 country code. Determines legal channel and power set."
+        },
+        "phy_modes": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["11a", "11b", "11g", "11n", "11ac", "11ax", "11be"] }
+        },
+        "dfs_required": {
+          "type": "boolean",
+          "description": "True if the current channel sits in a DFS-mandated range for this regulatory domain."
+        },
+        "admin_state": {
+          "type": "string",
+          "enum": ["enabled", "disabled", "unknown"],
+          "default": "unknown"
+        }
+      }
+    },
+
+    "rf_metrics": {
+      "type": "object",
+      "description": "Measured RF conditions. This is the primary evidence surface for diagnosis.",
+      "additionalProperties": false,
+      "properties": {
+        "noise_floor_dbm": {
+          "type": "number",
+          "description": "Typically -85 to -100. Elevated noise floor is a strong non-Wi-Fi interference signal."
+        },
+        "channel_utilization_pct": {
+          "type": "number", "minimum": 0, "maximum": 100,
+          "description": "Total airtime consumed, Wi-Fi and non-Wi-Fi combined."
+        },
+        "rx_utilization_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "tx_utilization_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "interference_pct": {
+          "type": "number", "minimum": 0, "maximum": 100,
+          "description": "Airtime lost to energy that is not decodable Wi-Fi on this BSS."
+        },
+        "co_channel_neighbors": {
+          "type": "integer",
+          "description": "Count of neighbouring BSSs on the same primary channel above the CCA threshold."
+        },
+        "adjacent_channel_neighbors": {
+          "type": "integer",
+          "description": "Count of overlapping-but-not-identical channel neighbours. Drives 2.4 GHz ACI diagnosis."
+        },
+        "strongest_neighbor_rssi_dbm": { "type": "number" },
+        "retry_rate_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "crc_error_rate_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+        "airtime_efficiency_pct": {
+          "type": "number", "minimum": 0, "maximum": 100,
+          "description": "Useful throughput per unit airtime. Low value with low utilization suggests rate/PHY problems, not congestion."
+        }
+      }
+    },
+
+    "non_wifi_interferers": {
+      "type": "array",
+      "description": "Spectrum-analysis detections, where the platform provides them. Absence is not evidence of absence — see analysis_context.spectrum_capable.",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["bluetooth", "microwave_oven", "zigbee", "cordless_phone", "video_bridge", "wireless_camera", "radar", "jammer", "continuous_transmitter", "unknown"]
+          },
+          "severity": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "duty_cycle_pct": { "type": "number", "minimum": 0, "maximum": 100 },
+          "center_freq_mhz": { "type": "number" },
+          "bandwidth_mhz": { "type": "number" }
+        }
+      }
+    },
+
+    "clients": {
+      "type": "object",
+      "description": "Aggregate client-side view. Per-client detail belongs in client_samples.",
+      "additionalProperties": false,
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "avg_snr_db": { "type": "number" },
+        "min_snr_db": { "type": "number" },
+        "avg_rssi_dbm": { "type": "number" },
+        "sticky_clients": {
+          "type": "integer",
+          "description": "Clients associated below an acceptable SNR while a materially better AP is available."
+        },
+        "legacy_client_count": {
+          "type": "integer",
+          "description": "Clients capable only of 11b/11g/11a rates. Drives airtime-consumption diagnosis."
+        },
+        "phy_rate_distribution": {
+          "type": "object",
+          "description": "Share of clients per PHY generation. Keys: 11b, 11g, 11n, 11ac, 11ax, 11be. Values: percentage.",
+          "additionalProperties": { "type": "number", "minimum": 0, "maximum": 100 }
+        },
+        "band_distribution": {
+          "type": "object",
+          "description": "Where clients actually landed across bands. Reveals band-steering failure.",
+          "additionalProperties": { "type": "number", "minimum": 0, "maximum": 100 }
+        },
+        "auth_failures_5m": { "type": "integer" },
+        "assoc_failures_5m": { "type": "integer" },
+        "roam_failures_5m": { "type": "integer" },
+        "avg_roam_time_ms": { "type": "number" }
+      }
+    },
+
+    "client_samples": {
+      "type": "array",
+      "description": "Optional per-client records for targeted diagnosis. Keep bounded — do not dump full client tables into the model.",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "client_ref": { "type": "string", "description": "Pseudonymised identifier. MUST NOT be a real MAC address." },
+          "snr_db": { "type": "number" },
+          "rssi_dbm": { "type": "number" },
+          "phy_mode": { "type": "string" },
+          "tx_rate_mbps": { "type": "number" },
+          "retry_rate_pct": { "type": "number" },
+          "supported_bands": { "type": "array", "items": { "type": "string", "enum": ["2.4GHz", "5GHz", "6GHz"] } },
+          "capabilities": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+
+    "events": {
+      "type": "array",
+      "description": "Time-ordered RF-relevant events in the observation window. Radar and channel-change events are decisive for 5 GHz diagnosis.",
+      "items": {
+        "type": "object",
+        "required": ["type", "timestamp"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "radar_detected", "channel_change", "cac_started", "cac_completed", "cac_failed",
+              "power_change", "width_change", "radio_reset", "ap_reboot",
+              "afc_grant_received", "afc_grant_denied", "afc_grant_expired",
+              "coverage_hole_detected", "rrm_dca_run", "interference_threshold_exceeded",
+              "client_excluded", "roam_failure"
+            ]
+          },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "channel_from": { "type": "integer" },
+          "channel_to": { "type": "integer" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+
+    "capabilities": {
+      "type": "object",
+      "description": "Feature state of this radio/WLAN. Central to the capability-gap root-cause class in mixed-vendor fleets.",
+      "additionalProperties": false,
+      "properties": {
+        "bands_supported": { "type": "array", "items": { "type": "string", "enum": ["2.4GHz", "5GHz", "6GHz"] } },
+        "dot11k": { "type": "boolean" },
+        "dot11v": { "type": "boolean" },
+        "dot11r": { "type": "boolean" },
+        "dot11w_pmf": { "type": "string", "enum": ["disabled", "optional", "required", "unknown"] },
+        "owe_enabled": { "type": "boolean" },
+        "wpa3_enforced": { "type": "boolean" },
+        "band_steering": { "type": "boolean" },
+        "airtime_fairness": { "type": "boolean" },
+        "afc_supported": { "type": "boolean" },
+        "afc_status": { "type": "string", "enum": ["granted", "denied", "pending", "expired", "not_applicable", "unknown"] },
+        "psc_only_beaconing": { "type": "boolean", "description": "6 GHz: whether the AP beacons only on Preferred Scanning Channels." },
+        "rnr_advertised": { "type": "boolean", "description": "6 GHz out-of-band discovery via Reduced Neighbor Report from 2.4/5 GHz." },
+        "fils_discovery": { "type": "boolean" },
+        "min_data_rate_mbps": { "type": "number", "description": "Lowest mandatory basic rate. Key lever for 2.4 GHz legacy-rate problems." },
+        "multicast_handling": { "type": "string", "enum": ["unicast_conversion", "multicast_direct", "flood", "drop", "unknown"] }
+      }
+    },
+
+    "neighbors": {
+      "type": "array",
+      "description": "Observed neighbouring BSSs. Vendor field is intentionally coarse — used for capability-gap reasoning only, never for vendor-specific remediation.",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "bss_ref": { "type": "string", "description": "Pseudonymised BSSID." },
+          "channel": { "type": "integer" },
+          "channel_width_mhz": { "type": "integer" },
+          "rssi_dbm": { "type": "number" },
+          "same_ess": { "type": "boolean", "description": "True if part of the same SSID/ESS — distinguishes self-interference from foreign interference." },
+          "vendor_hint": { "type": "string" }
+        }
+      }
+    },
+
+    "analysis_context": {
+      "type": "object",
+      "description": "Tells the model what it can and cannot conclude from this snapshot. Prevents confident diagnosis from absent data.",
+      "additionalProperties": false,
+      "properties": {
+        "observation_window_minutes": { "type": "number" },
+        "spectrum_capable": {
+          "type": "boolean",
+          "description": "False means non_wifi_interferers being empty carries no diagnostic weight."
+        },
+        "client_detail_available": { "type": "boolean" },
+        "neighbor_scan_available": { "type": "boolean" },
+        "missing_fields": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Explicit list of canonical fields the source platform could not supply."
+        },
+        "reported_symptom": {
+          "type": "string",
+          "description": "Free-text user complaint, e.g. 'video calls drop in the east wing around 2pm'."
+        }
+      }
+    }
+  }
+}

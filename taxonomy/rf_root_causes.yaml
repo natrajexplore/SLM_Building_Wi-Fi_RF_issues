@@ -1,0 +1,991 @@
+---
+# RF Root Cause Taxonomy — vendor neutral
+#
+# This file is the labelled cause set for the SLM. It drives three things:
+#   1. Synthetic training data generation (each cause -> N scenarios)
+#   2. The model's constrained output vocabulary (cause_id must exist here)
+#   3. Evaluation — a diagnosis is scored against the cause_id ground truth
+#
+# Field contract per cause:
+#   id                  stable identifier, never renumber
+#   name                short human label
+#   bands               which bands the cause can apply to
+#   description         physical/protocol mechanism, not a symptom restatement
+#   required_evidence   a list of GATE PREDICATES (see grammar below) that MUST
+#                        all hold against the input snapshot before this cause
+#                        is eligible to be asserted. v0.2.0: no longer bare
+#                        schema paths — see grammar block immediately below.
+#   supporting_evidence canonical schema paths that raise confidence when
+#                        present. Unchanged format — still bare paths, not
+#                        predicates. These never gate assertion.
+#   discriminators      how to tell this apart from its confusables
+#   confusable_with      other cause ids commonly mistaken for this one
+#   remediation_intent  vendor-neutral action statements — NEVER CLI
+#   severity_default    baseline impact, adjustable by the model per evidence
+#
+# RULE: remediation_intent describes WHAT to change and WHY. Translation to
+# vendor syntax happens in a separate post-processing step, if at all.
+#
+# ============================================================
+# required_evidence grammar (v0.2.0)
+# ============================================================
+#
+# Each entry in required_evidence is either a single PREDICATE OBJECT or an
+# ANY_OF GROUP. The list itself is an implicit AND — every entry must hold for
+# the cause to be assertion-eligible.
+#
+#   Predicate object:
+#     path:      canonical schema field path, dot notation, three forms:
+#                - `field.sub`        plain object field access.
+#                - `field[]`          the array itself — used bare (no
+#                                     trailing `.sub`) to test the array's own
+#                                     existence/non-emptiness, e.g.
+#                                     `non_wifi_interferers[]`.
+#                - `field[].sub`      wildcard over array elements — holds if
+#                                     at least one element's `sub` satisfies
+#                                     the predicate, e.g. `events[].type`.
+#                - `field["literal"]` object property access by an exact key
+#                                     name that isn't a valid bare identifier
+#                                     — needed for map-typed schema fields
+#                                     whose keys contain a dot, e.g.
+#                                     `clients.band_distribution["2.4GHz"]`.
+#                                     Do not confuse the quoted-literal form
+#                                     with the empty-bracket wildcard above;
+#                                     they index different things.
+#     predicate: one of  present | absent | == | != | >= | <= | > | <
+#                - present / absent take no value/threshold. `absent` means
+#                  "missing, null, OR (for arrays) present but empty" — ruling
+#                  a cause OUT needs the same leniency as ruling it in.
+#                - ==, !=, >=, <=, >, < are comparisons against exactly one of
+#                  `value` (a literal) or `threshold` (a name from
+#                  `thresholds.defensible` or `thresholds.operational` below).
+#                  Never both.
+#     value:     literal to compare against (string, number, or boolean).
+#     threshold: OR, name of a threshold key instead of a literal `value`.
+#
+#   any_of group:
+#     any_of: [ <predicate object>, <predicate object>, ... ]
+#     Satisfied when at least one member predicate holds. Used for enumerated
+#     alternatives ("one of several event types") or "either signal is
+#     enough". any_of groups sit as list entries alongside plain predicate
+#     objects; the outer required_evidence list is still an AND of its entries.
+#
+#   KNOWN GRAMMAR LIMITATIONS — do not paper over these with fake predicates:
+#     - No field-vs-field comparison. A predicate compares one path against a
+#       literal or a named threshold, never against another schema path.
+#       Causes whose true gate is a relationship between two fields on the
+#       SAME record (tx_power_dbm approaching tx_power_max_dbm) or between
+#       records (this radio's channel_width_mhz differing from a same-ESS
+#       neighbor's) cannot be fully gated by a predicate alone. Flagged
+#       per-cause below where it applies; left to discriminator reasoning.
+#     - No aggregate/count-over-array predicate. `events[].type == X` is
+#       satisfied by a SINGLE matching element; there is no "count of matching
+#       elements >= N" operator. Causes whose real signature is repetition
+#       (e.g. repeated channel_change events, not one) cannot be tightened
+#       past single-occurrence with this grammar.
+#
+#   IMPORTANT: predicates gate ASSERTION ELIGIBILITY ONLY. A cause whose
+#   required_evidence predicates all hold is a CANDIDATE, nothing more.
+#   Ranking multiple eligible candidates, assigning confidence, and applying
+#   `discriminators` to separate confusables remain the model's job and are
+#   NOT replaced or shortcut by predicates passing. A passing gate is
+#   necessary, never sufficient.
+
+version: "0.2.0"
+schema_ref: "schema/canonical_rf.schema.json"
+
+thresholds:
+  # Two tiers, split by epistemic status — not by which causes use them.
+  #
+  # defensible: anchored in a protocol/spec-mandated constant, so the value
+  #   itself is not a judgment call. Keep this bucket small; demand a
+  #   citation-worthy justification for anything added to it. It is still not
+  #   a substitute for the RAG-cited regulatory facts the model must use for
+  #   hard legal limits (channel/power tables, DFS timing) — those never
+  #   belong in this file.
+  #
+  # operational: RF engineering rules of thumb over continuous measurements.
+  #   Reasonable, widely used in vendor design guides, but genuinely tunable
+  #   per deployment — treat as heuristics, not laws. Where a metric has both
+  #   a GATE and a descriptive value, the GATE sits at the clearly-abnormal
+  #   end of the range and is the only one of the pair used inside
+  #   required_evidence predicates. The descriptive value is for
+  #   discriminator narrative and supporting_evidence framing only — it is
+  #   deliberately too close to a healthy reading to safely license assertion
+  #   on its own (this is the over-fire failure mode the v0.1.0 gate-strength
+  #   review identified).
+
+  defensible:
+    legacy_rate_ceiling_mbps: 11
+      # 802.11b's basic rates are 1/2/5.5/11 Mbps. min_data_rate_mbps <= 11
+      # means a legacy basic rate is still mandatory — a protocol fact, not a
+      # chosen cutoff.
+
+  operational:
+    snr_poor_db: 15                        # GATE
+    snr_marginal_db: 20                    # descriptive only
+    snr_good_db: 25                        # descriptive only
+    utilization_elevated_pct: 50           # descriptive only
+    utilization_saturated_pct: 75          # GATE
+    noise_floor_nominal_dbm: -92           # reference baseline, not a gate
+    noise_floor_elevated_dbm: -85          # descriptive only
+    noise_floor_clearly_elevated_dbm: -80  # GATE — ~12 dB over nominal; new in v0.2.0
+    retry_elevated_pct: 15                 # descriptive only
+    retry_rate_clearly_elevated_pct: 25    # GATE — new in v0.2.0
+    cci_neighbor_concern: 3                # GATE — unchanged from v0.1.0; already sits
+                                            # at the abnormal end, no softer sibling needed
+    roam_time_concern_ms: 200              # GATE — new in v0.2.0; widely-cited voice
+                                            # fast-roam ceiling in WLAN design guidance
+    band_share_negligible_pct: 5           # GATE — new in v0.2.0; uptake this low despite
+                                            # availability is absence, not variance
+    band_share_dominant_pct: 60            # GATE — new in v0.2.0; majority-on-2.4GHz
+                                            # despite multi-band capability
+
+causes:
+
+  # ============================================================
+  # 2.4 GHz
+  # ============================================================
+
+  - id: RF-24-001
+    name: Co-channel interference from non-1/6/11 channel plan
+    bands: [2.4GHz]
+    description: >
+      Multiple BSSs share the same primary channel within carrier-sense range.
+      CSMA/CA forces them to serialize, so aggregate airtime is divided rather
+      than multiplied. Common where DCA is disabled or channels were set manually.
+    required_evidence:
+      - path: rf_metrics.co_channel_neighbors
+        predicate: ">="
+        threshold: cci_neighbor_concern
+      - path: rf_metrics.channel_utilization_pct
+        predicate: ">="
+        threshold: utilization_elevated_pct
+    supporting_evidence:
+      - rf_metrics.channel_utilization_pct
+      - rf_metrics.rx_utilization_pct
+      - neighbors[].same_ess
+    discriminators: >
+      Utilization is high AND co_channel_neighbors is high AND interference_pct
+      is comparatively low. Energy is decodable Wi-Fi, not noise. If neighbours
+      are same_ess, this is self-inflicted density (see RF-24-005).
+    confusable_with: [RF-24-002, RF-24-003, RF-XB-002]
+    remediation_intent:
+      - Re-plan the 2.4 GHz channel assignment onto the non-overlapping 1/6/11 set.
+      - Enable automatic channel selection if it was disabled, and verify it is permitted to change channels.
+      - Reduce 2.4 GHz radio count by disabling radios on a subset of APs in dense deployments.
+    severity_default: high
+
+  - id: RF-24-002
+    name: Adjacent-channel interference from overlapping channel plan
+    bands: [2.4GHz]
+    description: >
+      Neighbouring BSSs occupy partially overlapping channels (e.g. 3, 4, 8).
+      Energy is strong enough to corrupt frames but not decodable, so CSMA
+      deferral does not apply. Corruption manifests as retries and CRC errors.
+    required_evidence:
+      - path: rf_metrics.adjacent_channel_neighbors
+        predicate: ">"
+        value: 0
+      - path: rf_metrics.retry_rate_pct
+        predicate: ">="
+        threshold: retry_rate_clearly_elevated_pct
+    supporting_evidence:
+      - rf_metrics.retry_rate_pct
+      - rf_metrics.crc_error_rate_pct
+      - rf_metrics.noise_floor_dbm
+    discriminators: >
+      Retry and CRC rates are elevated while channel_utilization_pct may be only
+      moderate. This is the signature that separates ACI from CCI — CCI degrades
+      throughput politely, ACI corrupts frames.
+    confusable_with: [RF-24-001, RF-24-003]
+    remediation_intent:
+      - Move all controlled APs onto 1/6/11; overlapping plans amplify rather than avoid contention.
+      - Where the overlap originates from a foreign network, reduce cell size and raise the minimum data rate rather than increasing power.
+    severity_default: high
+
+  - id: RF-24-003
+    name: Non-Wi-Fi interference in the ISM band
+    bands: [2.4GHz]
+    description: >
+      Bluetooth, microwave ovens, ZigBee, cordless phones, analogue video
+      bridges and wireless cameras share 2.4 GHz. They do not observe CSMA,
+      so they raise the noise floor and destroy frames irrespective of Wi-Fi
+      channel planning.
+    required_evidence:
+      - path: rf_metrics.noise_floor_dbm
+        predicate: ">="
+        threshold: noise_floor_clearly_elevated_dbm
+    supporting_evidence:
+      - non_wifi_interferers[]
+      - rf_metrics.interference_pct
+      - rf_metrics.retry_rate_pct
+    discriminators: >
+      Noise floor is elevated well above nominal AND interference_pct is high
+      while co_channel_neighbors is low. If analysis_context.spectrum_capable is
+      false, an empty non_wifi_interferers array is NOT evidence of absence —
+      state this limitation explicitly and lower confidence accordingly.
+    confusable_with: [RF-24-001, RF-24-002]
+    remediation_intent:
+      - Identify and physically relocate or replace the interferer where possible; RF configuration cannot mitigate a duty-cycle jammer.
+      - Where the interferer is fixed (e.g. microwave in a break room), move affected APs to the least-affected channel and shrink the cell.
+      - If the workload tolerates it, migrate clients to 5 or 6 GHz.
+    severity_default: high
+
+  - id: RF-24-004
+    name: Legacy low data rates consuming disproportionate airtime
+    bands: [2.4GHz]
+    description: >
+      Basic rates of 1/2/5.5/11 Mbps left enabled mean management frames and
+      slow clients occupy airtime far out of proportion to the data carried.
+      A single 1 Mbps client can consume the airtime of many fast clients.
+    required_evidence:
+      - path: capabilities.min_data_rate_mbps
+        predicate: "<="
+        threshold: legacy_rate_ceiling_mbps
+      - path: clients.legacy_client_count
+        predicate: ">"
+        value: 0
+    supporting_evidence:
+      - clients.legacy_client_count
+      - clients.phy_rate_distribution
+      - rf_metrics.airtime_efficiency_pct
+      - rf_metrics.channel_utilization_pct
+    discriminators: >
+      Airtime efficiency is low while utilization is high, and the PHY rate
+      distribution shows meaningful 11b/11g population. Distinguishes from pure
+      congestion, where efficiency stays reasonable.
+    confusable_with: [RF-24-005, RF-24-001]
+    remediation_intent:
+      - Raise the minimum mandatory data rate to disable 802.11b rates, after confirming no business-critical legacy clients depend on them.
+      - Inventory legacy clients before the change; this action will disassociate devices that cannot meet the new rate.
+    severity_default: medium
+
+  - id: RF-24-005
+    name: Excessive cell overlap from over-powered radios
+    bands: [2.4GHz]
+    description: >
+      2.4 GHz propagates further than 5/6 GHz at equal power. Designs that set
+      uniform power across bands produce oversized 2.4 GHz cells, creating
+      self-interference between APs of the same ESS and sticky-client conditions.
+    required_evidence:
+      - path: rf_metrics.co_channel_neighbors
+        predicate: ">="
+        threshold: cci_neighbor_concern
+      - path: neighbors[].same_ess
+        predicate: "=="
+        value: true
+      - path: radio.tx_power_dbm
+        predicate: present
+    supporting_evidence:
+      - rf_metrics.strongest_neighbor_rssi_dbm
+      - neighbors[].same_ess
+      - clients.sticky_clients
+    discriminators: >
+      Neighbours are predominantly same_ess and their RSSI is high. The problem
+      is self-generated, so channel re-planning alone will not resolve it.
+    confusable_with: [RF-24-001, RF-XB-001]
+    remediation_intent:
+      - Lower 2.4 GHz transmit power independently of 5/6 GHz; the bands should not share a power setting.
+      - Disable 2.4 GHz radios on a subset of APs where AP density was driven by 5/6 GHz coverage requirements.
+    severity_default: medium
+
+  - id: RF-24-006
+    name: Client density exceeding channel capacity
+    bands: [2.4GHz]
+    description: >
+      Only three non-overlapping channels exist. Beyond a certain client and AP
+      density, contention is a spectrum-supply problem that no channel plan can
+      resolve.
+    required_evidence:
+      - path: clients.count
+        predicate: present
+      - path: rf_metrics.channel_utilization_pct
+        predicate: ">="
+        threshold: utilization_saturated_pct
+    supporting_evidence:
+      - rf_metrics.tx_utilization_pct
+      - site.environment
+    discriminators: >
+      Utilization is saturated, channel plan is already correct at 1/6/11, noise
+      floor is nominal, and no significant legacy population exists. Exhaustion
+      of remedies is itself the evidence.
+    confusable_with: [RF-24-001, RF-24-004]
+    remediation_intent:
+      - Steer capable clients to 5 or 6 GHz and treat 2.4 GHz as a coverage-of-last-resort band.
+      - Accept 2.4 GHz as a low-capacity band in high-density designs rather than attempting to tune it into capacity.
+    severity_default: medium
+
+  # ============================================================
+  # 5 GHz
+  # ============================================================
+
+  - id: RF-5-001
+    name: DFS radar detection forcing channel evacuation
+    bands: [5GHz]
+    description: >
+      On DFS channels the AP must vacate within a bounded time of detecting
+      radar and may not return for a mandated non-occupancy period. Clients are
+      disconnected or must follow via channel-switch announcement, producing
+      brief but total outages.
+    required_evidence:
+      - path: events[].type
+        predicate: "=="
+        value: radar_detected
+      - path: radio.dfs_required
+        predicate: "=="
+        value: true
+    supporting_evidence:
+      - events[].type == channel_change
+      - radio.regulatory_domain
+      - clients.assoc_failures_5m
+    discriminators: >
+      Radar events correlate in time with the reported symptom. Look for a
+      channel_change event immediately following radar_detected. Recurrence at a
+      consistent time of day suggests a fixed radar source, e.g. airport or
+      weather radar.
+    confusable_with: [RF-5-002, RF-XB-004]
+    remediation_intent:
+      - Confirm whether the detections are genuine radar or false positives; recurring detections in the same band segment near known radar installations are usually genuine.
+      - Where genuine and frequent, remove the affected DFS channel range from the assignable channel set for that site.
+      - Where the site cannot afford disruption, restrict the channel plan to non-DFS channels and accept the reduced channel count.
+    severity_default: high
+
+  - id: RF-5-002
+    name: Channel availability check blocking service on DFS channels
+    bands: [5GHz]
+    description: >
+      Before using a DFS channel the AP must perform a channel availability
+      check, during which it cannot serve clients. On weather-radar channels
+      this period is substantially longer. Repeated CAC cycles look like
+      intermittent AP unavailability.
+    required_evidence:
+      # Tightened in v0.2.0: cac_started/cac_completed are routine, expected
+      # events on every DFS-channel radio — a single successful startup CAC is
+      # normal operation, not a fault. Only cac_failed unambiguously points to
+      # a channel that should be excluded. The "repeated normal CAC cycles feel
+      # like intermittent unavailability" scenario this cause also names has
+      # no clean gate under this grammar (no aggregate count predicate — see
+      # header) and is left to discriminator reasoning over supporting_evidence.
+      - path: events[].type
+        predicate: "=="
+        value: cac_failed
+    supporting_evidence:
+      - radio.admin_state
+      - radio.dfs_required
+      - events[].type == channel_change
+    discriminators: >
+      Outage windows align with CAC duration rather than with traffic load.
+      cac_failed events point to a channel that should be excluded outright.
+    confusable_with: [RF-5-001]
+    remediation_intent:
+      - Exclude channels that repeatedly fail CAC from the assignable set.
+      - Avoid extended-CAC channel ranges at sites that cannot tolerate startup delay.
+    severity_default: medium
+
+  - id: RF-5-003
+    name: Channel width too wide for available spectrum
+    bands: [5GHz, 6GHz]
+    description: >
+      Wide channels increase peak rate but reduce the number of non-overlapping
+      channels, raising co-channel interference in dense deployments. They also
+      spread the same transmit power over more spectrum, reducing effective
+      range per subcarrier.
+    required_evidence:
+      - path: radio.channel_width_mhz
+        predicate: ">="
+        value: 80
+      - path: rf_metrics.co_channel_neighbors
+        predicate: ">="
+        threshold: cci_neighbor_concern
+    supporting_evidence:
+      - clients.count
+      - rf_metrics.channel_utilization_pct
+      - clients.avg_snr_db
+    discriminators: >
+      Wide width combined with high co-channel neighbour count and high AP
+      density. If SNR is also marginal, the width is hurting both capacity and
+      coverage simultaneously.
+    confusable_with: [RF-5-004, RF-24-001]
+    remediation_intent:
+      - Narrow the channel width to increase the count of non-overlapping channels; in dense deployments channel reuse beats per-client peak rate.
+      - Size width to AP density and available spectrum after DFS exclusions, not to headline throughput figures.
+    severity_default: medium
+
+  - id: RF-5-004
+    name: Insufficient SNR at cell edge
+    bands: [5GHz, 6GHz]
+    description: >
+      Higher-order modulation requires high SNR. As clients move toward the cell
+      edge, rate adaptation falls back, airtime per bit rises, and retries climb.
+      Coverage holes are the terminal case.
+    required_evidence:
+      - path: clients.min_snr_db
+        predicate: "<"
+        threshold: snr_poor_db
+    supporting_evidence:
+      - clients.avg_snr_db
+      - events[].type == coverage_hole_detected
+      - rf_metrics.retry_rate_pct
+      - radio.tx_power_dbm
+      - radio.tx_power_max_dbm
+    discriminators: >
+      Low SNR with a nominal noise floor indicates a coverage/design problem.
+      Low SNR with an elevated noise floor points to interference instead —
+      route to RF-24-003 or RF-XB-003.
+    confusable_with: [RF-24-003, RF-5-005, RF-XB-001]
+    remediation_intent:
+      - Verify AP placement and antenna orientation before adjusting power; a power increase cannot fix a physical coverage gap and worsens overlap.
+      - If transmit power is already at the regulatory ceiling, additional APs are required.
+      - Check whether excessive channel width is diluting power per subcarrier.
+    severity_default: high
+
+  - id: RF-5-005
+    name: Transmit power control misconfiguration
+    bands: [5GHz, 6GHz]
+    description: >
+      Power set too low creates coverage holes; set too high creates overlap and
+      an asymmetric link budget where the AP is heard by clients that cannot be
+      heard back. Fixed power in a dynamic environment causes both over time.
+    required_evidence:
+      # Grammar-limited: the real gate is a relationship between tx_power_dbm
+      # and tx_power_max_dbm (proximity to ceiling) or an uplink/downlink
+      # asymmetry — both are field-vs-field comparisons this grammar cannot
+      # express (see header). sticky_clients is the closest available
+      # single-field proxy for a visible symptom; presence of both power
+      # fields is otherwise vacuous on its own.
+      - path: radio.tx_power_dbm
+        predicate: present
+      - path: radio.tx_power_max_dbm
+        predicate: present
+      - path: clients.sticky_clients
+        predicate: ">"
+        value: 0
+    supporting_evidence:
+      - rf_metrics.strongest_neighbor_rssi_dbm
+      - clients.avg_snr_db
+      - clients.sticky_clients
+    discriminators: >
+      Compare configured power against the regulatory ceiling and against
+      neighbour RSSI. Asymmetry — strong downlink, weak uplink — shows as good
+      client RSSI with high retry rates.
+    confusable_with: [RF-5-004, RF-24-005]
+    remediation_intent:
+      - Enable dynamic power control with a bounded min/max range appropriate to the environment rather than a fixed value.
+      - Set the power ceiling with client transmit capability in mind; APs should not shout further than clients can reply.
+    severity_default: medium
+
+  - id: RF-5-006
+    name: Regulatory domain restricting available channels
+    bands: [5GHz, 6GHz]
+    description: >
+      Legal channel and power sets differ by country. A design validated in one
+      regulatory domain may have materially fewer usable channels in another,
+      forcing reuse and raising co-channel interference.
+    required_evidence:
+      - path: radio.regulatory_domain
+        predicate: present
+      - path: rf_metrics.co_channel_neighbors
+        predicate: ">="
+        threshold: cci_neighbor_concern
+    supporting_evidence:
+      - rf_metrics.co_channel_neighbors
+      - radio.tx_power_max_dbm
+      - radio.power_mode
+    discriminators: >
+      Channel plan is compressed into a narrow range despite the band nominally
+      offering more. Confirm the legal channel set for the stated domain via the
+      retrieval corpus rather than asserting it from memory.
+    confusable_with: [RF-5-001, RF-5-003]
+    remediation_intent:
+      - Verify the configured regulatory domain matches the physical site.
+      - Re-plan channel reuse against the legally available set, not the hardware-capable set.
+    severity_default: medium
+
+  # ============================================================
+  # 6 GHz
+  # ============================================================
+
+  - id: RF-6-001
+    name: AFC dependency blocking standard power operation
+    bands: [6GHz]
+    description: >
+      Standard Power operation requires a valid grant from an Automated Frequency
+      Coordination service. Without a grant the AP must fall back to Low Power
+      Indoor, materially reducing coverage. Grants also expire and must renew.
+    required_evidence:
+      - path: radio.power_mode
+        predicate: "=="
+        value: LPI
+      - any_of:
+          - path: capabilities.afc_status
+            predicate: "=="
+            value: denied
+          - path: capabilities.afc_status
+            predicate: "=="
+            value: expired
+    supporting_evidence:
+      - events[].type in [afc_grant_denied, afc_grant_expired, afc_grant_received]
+      - radio.tx_power_dbm
+      - clients.avg_snr_db
+    discriminators: >
+      Coverage shortfall coincides with power_mode LPI where SP was designed for,
+      or with an afc_grant_expired event. Distinguish from ordinary coverage
+      shortfall by checking afc_status first.
+    confusable_with: [RF-6-002, RF-5-004]
+    remediation_intent:
+      - Confirm AFC service reachability and that the AP's geolocation and antenna height are correctly registered.
+      - Where AFC is unavailable or the regulatory domain does not offer Standard Power, re-plan coverage around Low Power Indoor limits rather than expecting SP range.
+    severity_default: high
+
+  - id: RF-6-002
+    name: Low Power Indoor ceiling limiting coverage
+    bands: [6GHz]
+    description: >
+      LPI operation caps EIRP and power spectral density well below 5 GHz levels.
+      A one-for-one AP replacement from a 5 GHz design will under-cover at 6 GHz,
+      particularly at wide channel widths where PSD limits bite hardest.
+    required_evidence:
+      - path: radio.power_mode
+        predicate: "=="
+        value: LPI
+      - path: clients.min_snr_db
+        predicate: "<"
+        threshold: snr_poor_db
+    supporting_evidence:
+      - clients.min_snr_db
+      - radio.channel_width_mhz
+      - events[].type == coverage_hole_detected
+    discriminators: >
+      Power is at or near the LPI ceiling and SNR is still marginal. Increasing
+      power is not available as a remedy — this is a design-density problem.
+    confusable_with: [RF-6-001, RF-5-004]
+    remediation_intent:
+      - Design 6 GHz coverage on its own power budget rather than inheriting AP placement from the 5 GHz plan.
+      - Consider narrowing channel width to improve power spectral density per subcarrier at the cell edge.
+    severity_default: high
+
+  - id: RF-6-003
+    name: Clients not discovering 6 GHz BSS
+    bands: [6GHz]
+    description: >
+      6 GHz restricts probing behaviour. Clients rely on Preferred Scanning
+      Channels, Reduced Neighbor Report elements advertised out-of-band from
+      2.4/5 GHz, and FILS discovery frames. If the AP does not advertise these,
+      capable clients never associate despite good coverage.
+    required_evidence:
+      - path: clients.count
+        predicate: ">"
+        value: 0
+      - path: 'clients.band_distribution["6GHz"]'
+        predicate: "<="
+        threshold: band_share_negligible_pct
+      - any_of:
+          - path: capabilities.rnr_advertised
+            predicate: "=="
+            value: false
+          - path: capabilities.psc_only_beaconing
+            predicate: "=="
+            value: false
+          - path: capabilities.fils_discovery
+            predicate: "=="
+            value: false
+    supporting_evidence:
+      - capabilities.psc_only_beaconing
+      - capabilities.fils_discovery
+      - clients.band_distribution
+      - clients.count
+    discriminators: >
+      6 GHz radio is healthy — good SNR, low utilization — but carries almost no
+      clients while 5 GHz is congested. This asymmetry is the signature.
+    confusable_with: [RF-6-004, RF-XB-002]
+    remediation_intent:
+      - Verify the 6 GHz BSS is advertised via Reduced Neighbor Report from co-located 2.4/5 GHz radios.
+      - Prefer Preferred Scanning Channels for the primary channel so clients performing a PSC-only scan can find the BSS.
+      - Confirm the co-located lower-band radios are enabled; disabling them can strand the 6 GHz BSS.
+    severity_default: high
+
+  - id: RF-6-004
+    name: WPA3/OWE enforcement excluding legacy clients
+    bands: [6GHz]
+    description: >
+      6 GHz mandates WPA3-SAE, OWE or WPA3-Enterprise with protected management
+      frames. Clients supporting only WPA2 cannot associate. This is correct
+      behaviour presenting as a client-side fault.
+    required_evidence:
+      # v0.1.0 gate was wpa3_enforced + dot11w_pmf alone — both are simply the
+      # COMPLIANT 6 GHz default and were satisfied by every correctly
+      # configured radio, healthy or not. Tightened to require an actual
+      # failure signal.
+      - path: capabilities.wpa3_enforced
+        predicate: "=="
+        value: true
+      - any_of:
+          - path: clients.auth_failures_5m
+            predicate: ">"
+            value: 0
+          - path: clients.assoc_failures_5m
+            predicate: ">"
+            value: 0
+    supporting_evidence:
+      - clients.auth_failures_5m
+      - clients.assoc_failures_5m
+      - client_samples[].capabilities
+    discriminators: >
+      Authentication failures concentrate on a specific client population while
+      other clients associate normally on the same radio. RF metrics are healthy.
+    confusable_with: [RF-6-003, RF-XB-005]
+    remediation_intent:
+      - Confirm the affected clients support WPA3 or OWE; 6 GHz cannot be made to accept WPA2 and this is not a tunable.
+      - Provide a 2.4/5 GHz SSID for legacy devices rather than attempting to weaken 6 GHz security.
+      - Where a transition-mode SSID is used, verify it does not itself confuse client supplicants.
+    severity_default: medium
+
+  - id: RF-6-005
+    name: Client radio capability gap at 6 GHz
+    bands: [6GHz]
+    description: >
+      Many deployed clients have no 6 GHz radio at all, or support only a subset
+      of the band. Capacity provisioned at 6 GHz goes unused while lower bands
+      remain congested.
+    required_evidence:
+      - path: 'clients.band_distribution["6GHz"]'
+        predicate: "<="
+        threshold: band_share_negligible_pct
+      - path: capabilities.rnr_advertised
+        predicate: "=="
+        value: true
+    supporting_evidence:
+      - client_samples[].supported_bands
+      - clients.count
+      - rf_metrics.channel_utilization_pct
+    discriminators: >
+      6 GHz is discoverable and correctly configured — RNR present, PSC in use,
+      WPA3 satisfied — yet client uptake remains low. Rules out RF-6-003 and
+      RF-6-004 before landing here.
+    confusable_with: [RF-6-003, RF-6-004]
+    remediation_intent:
+      - Inventory client 6 GHz capability before attributing unused capacity to configuration.
+      - Plan capacity on the 5 GHz band for the current client mix and treat 6 GHz as headroom for refresh cycles.
+    severity_default: low
+
+  # ============================================================
+  # Cross-band
+  # ============================================================
+
+  - id: RF-XB-001
+    name: Sticky clients holding a degraded association
+    bands: [2.4GHz, 5GHz, 6GHz]
+    description: >
+      Roaming is a client-side decision. Clients frequently retain an
+      association well past the point where a better AP is available, dragging
+      down their own throughput and consuming disproportionate airtime at low
+      PHY rates.
+    required_evidence:
+      - path: clients.sticky_clients
+        predicate: ">"
+        value: 0
+    supporting_evidence:
+      - clients.min_snr_db
+      - capabilities.dot11k
+      - capabilities.dot11v
+      - client_samples[].snr_db
+      - rf_metrics.airtime_efficiency_pct
+    discriminators: >
+      Individual clients show poor SNR while the radio's aggregate metrics are
+      healthy and better-positioned APs exist. The problem is per-client, not
+      per-cell.
+    confusable_with: [RF-5-004, RF-24-005]
+    remediation_intent:
+      - Enable 802.11k neighbour reports and 802.11v BSS transition management so clients receive steering hints.
+      - Reduce cell overlap so the decision to roam becomes unambiguous; oversized cells are the underlying enabler.
+      - Where clients ignore 802.11v, consider a minimum-RSSI association threshold, applied conservatively to avoid disconnect loops.
+    severity_default: medium
+
+  - id: RF-XB-002
+    name: Band steering failure or misconfiguration
+    bands: [2.4GHz, 5GHz, 6GHz]
+    description: >
+      Dual and tri-band capable clients land on 2.4 GHz and remain there,
+      leaving higher-band capacity unused. Causes range from steering being
+      disabled, to steering thresholds set too permissively, to clients that
+      ignore steering entirely.
+    required_evidence:
+      - path: 'clients.band_distribution["2.4GHz"]'
+        predicate: ">="
+        threshold: band_share_dominant_pct
+      - path: capabilities.band_steering
+        predicate: present
+    supporting_evidence:
+      - clients.count
+      - rf_metrics.channel_utilization_pct
+      - client_samples[].supported_bands
+    discriminators: >
+      Client population skews to 2.4 GHz despite client_samples showing
+      multi-band capability. If clients are genuinely single-band, this is
+      RF-6-005 or a refresh-cycle issue, not a steering fault.
+    confusable_with: [RF-6-003, RF-6-005, RF-24-006]
+    remediation_intent:
+      - Enable band steering and verify its RSSI threshold is strict enough to act.
+      - Raise the 2.4 GHz minimum data rate so the band is less attractive at range.
+      - Reduce 2.4 GHz transmit power to shrink its apparent advantage at association time.
+    severity_default: medium
+
+  - id: RF-XB-003
+    name: Elevated noise floor of undetermined origin
+    bands: [2.4GHz, 5GHz, 6GHz]
+    description: >
+      Noise floor sits materially above nominal without an identified source.
+      Every link budget in the cell is reduced by the excess, compressing
+      effective coverage regardless of transmit power.
+    required_evidence:
+      - path: rf_metrics.noise_floor_dbm
+        predicate: ">="
+        threshold: noise_floor_clearly_elevated_dbm
+      - path: non_wifi_interferers[]
+        predicate: absent
+    supporting_evidence:
+      - rf_metrics.interference_pct
+      - non_wifi_interferers[]
+      - analysis_context.spectrum_capable
+      - clients.avg_snr_db
+    discriminators: >
+      Noise floor is elevated but no interferer is classified. If
+      spectrum_capable is false, state clearly that source attribution is not
+      possible from this data and recommend a spectrum capture rather than
+      guessing a cause.
+    confusable_with: [RF-24-003, RF-5-004]
+    remediation_intent:
+      - Perform a spectrum capture at the affected location; without it, source attribution is speculation.
+      - Rule out local electrical noise and faulty or misconnected antenna cabling before re-planning RF.
+    severity_default: medium
+
+  - id: RF-XB-004
+    name: Roaming failure due to missing fast-transition support
+    bands: [2.4GHz, 5GHz, 6GHz]
+    description: >
+      Without 802.11r fast transition, each roam requires full authentication.
+      For latency-sensitive traffic such as voice, the resulting gap is audible
+      or session-breaking, even when RF coverage is adequate.
+    required_evidence:
+      # v0.1.0 gate was dot11r alone — false is an extremely common, entirely
+      # benign default (legacy client compatibility, no latency-sensitive
+      # traffic) and proved nothing about actual roam failures on its own.
+      - path: capabilities.dot11r
+        predicate: "=="
+        value: false
+      - any_of:
+          - path: clients.roam_failures_5m
+            predicate: ">"
+            value: 0
+          - path: clients.avg_roam_time_ms
+            predicate: ">="
+            threshold: roam_time_concern_ms
+    supporting_evidence:
+      - clients.roam_failures_5m
+      - clients.avg_roam_time_ms
+      - capabilities.dot11k
+      - capabilities.dot11v
+    discriminators: >
+      Roam times are high and failures cluster at cell boundaries while SNR at
+      those boundaries is adequate. Coverage is not the constraint — transition
+      time is.
+    confusable_with: [RF-XB-001, RF-5-004]
+    remediation_intent:
+      - Enable 802.11r fast transition, verifying client compatibility first; some older supplicants fail to associate to FT-enabled SSIDs.
+      - Where FT cannot be enabled fleet-wide, use a separate SSID for latency-sensitive devices.
+      - Pair with 802.11k and 802.11v so clients choose the right target before transitioning.
+    severity_default: high
+
+  - id: RF-XB-005
+    name: Inconsistent RF profile across AP groups
+    bands: [2.4GHz, 5GHz, 6GHz]
+    description: >
+      Adjacent APs configured with divergent power, channel width, data rate or
+      feature settings create boundary regions where client behaviour becomes
+      unpredictable. Symptoms appear location-dependent and resist per-AP
+      troubleshooting.
+    required_evidence:
+      # Grammar-limited: the true gate is THIS radio's power/width diverging
+      # from a same-ESS neighbour's — a cross-record comparison this grammar
+      # cannot express (see header). The predicates below only confirm the
+      # preconditions for that comparison (a same-ESS neighbour exists, an
+      # AP-group boundary concept is populated); the actual divergence check
+      # stays in discriminators against supporting_evidence.
+      - path: neighbors[].same_ess
+        predicate: "=="
+        value: true
+      - path: site.ap_group
+        predicate: present
+    supporting_evidence:
+      - neighbors[].channel_width_mhz
+      - neighbors[].same_ess
+      - capabilities.min_data_rate_mbps
+    discriminators: >
+      Same-ESS neighbours show materially different width or power settings.
+      Symptoms are reported at boundaries between areas rather than uniformly.
+    confusable_with: [RF-XB-001, RF-CG-001]
+    remediation_intent:
+      - Reconcile RF profile settings across adjacent AP groups; boundaries between differently configured groups are where clients misbehave.
+      - Where a deliberate difference exists, e.g. warehouse versus office, place the boundary at a physical break rather than mid-coverage.
+    severity_default: medium
+
+  - id: RF-XB-006
+    name: Automatic channel selection instability
+    bands: [2.4GHz, 5GHz, 6GHz]
+    description: >
+      Channel assignment algorithms that run too aggressively, or that react to
+      transient interference, cause repeated channel changes. Each change is
+      disruptive, and the aggregate effect is worse than a suboptimal but stable
+      plan.
+    required_evidence:
+      # Grammar-limited: the real signature is REPEATED channel_change events
+      # excluding any co-occurring radar_detected, i.e. an aggregate count with
+      # a filtered exclusion — neither operation exists in this grammar (see
+      # header). This gate is satisfied by a single channel_change event; the
+      # multiplicity and radar-exclusion judgment stay with discriminators.
+      - path: events[].type
+        predicate: "=="
+        value: channel_change
+    supporting_evidence:
+      - events[].type == rrm_dca_run
+      - events[].type == interference_threshold_exceeded
+      - analysis_context.observation_window_minutes
+    discriminators: >
+      Multiple channel_change events within a short window without corresponding
+      radar_detected events. Distinguishes algorithmic churn from mandatory DFS
+      evacuation.
+    confusable_with: [RF-5-001]
+    remediation_intent:
+      - Lengthen the channel-selection interval and raise the change sensitivity threshold; stability usually outperforms optimality.
+      - Constrain the assignable channel list so the algorithm has fewer marginal options to oscillate between.
+    severity_default: medium
+
+  - id: RF-XB-007
+    name: Wired-side or infrastructure fault presenting as RF degradation
+    bands: [2.4GHz, 5GHz, 6GHz]
+    description: >
+      Uplink congestion, PoE budget shortfalls forcing radio downgrade, MTU
+      problems, DHCP exhaustion and controller reachability failures all surface
+      to users as "the Wi-Fi is broken" while RF metrics remain healthy.
+    required_evidence:
+      # v0.1.0 gate was channel_utilization_pct + avg_snr_db alone — any
+      # healthy radio with no complaint at all satisfied this. reported_symptom
+      # is now required so the cause cannot fire absent an actual complaint.
+      - path: analysis_context.reported_symptom
+        predicate: present
+      - path: rf_metrics.channel_utilization_pct
+        predicate: "<"
+        threshold: utilization_elevated_pct
+      - path: clients.avg_snr_db
+        predicate: ">="
+        threshold: snr_marginal_db
+    supporting_evidence:
+      - clients.auth_failures_5m
+      - events[].type in [ap_reboot, radio_reset]
+      - radio.admin_state
+    discriminators: >
+      RF metrics are healthy across the board — good SNR, low utilization,
+      nominal noise floor — yet users report failure. Healthy RF plus reported
+      failure should raise this cause, not drive deeper RF tuning.
+    confusable_with: [RF-XB-004, RF-6-004]
+    remediation_intent:
+      - Verify AP uplink utilization, PoE power budget and negotiated port speed before making any RF change.
+      - Check DHCP scope availability and controller or gateway reachability.
+      - State explicitly when RF is not the constraint; recommending RF changes here wastes effort and can degrade a working design.
+    severity_default: high
+
+  # ============================================================
+  # Capability gap — mixed-vendor and mixed-generation fleets
+  # ============================================================
+
+  - id: RF-CG-001
+    name: Feature support asymmetry across the fleet
+    bands: [2.4GHz, 5GHz, 6GHz]
+    description: >
+      In mixed-vendor or mixed-generation deployments, features such as 802.11r,
+      802.11k/v, WPA3 and OWE may be supported inconsistently. Clients crossing
+      the boundary between supporting and non-supporting APs experience failures
+      that appear only in specific physical locations.
+    required_evidence:
+      # v0.1.0 gate named the whole `capabilities` object plus same_ess — always
+      # true for any same-ESS pair, regardless of whether their capabilities
+      # actually differ. Grammar-limited: the true gate is a cross-record
+      # capability comparison (this radio vs. its same-ESS neighbour), which
+      # this grammar cannot express (see header). The predicates below only
+      # confirm the preconditions (a same-ESS neighbour with a known vendor
+      # identity, and this radio's own capability data present) for that
+      # comparison; the actual mismatch judgment stays with discriminators.
+      - path: neighbors[].same_ess
+        predicate: "=="
+        value: true
+      - path: neighbors[].vendor_hint
+        predicate: present
+      - path: capabilities.dot11r
+        predicate: present
+    supporting_evidence:
+      - neighbors[].vendor_hint
+      - clients.roam_failures_5m
+      - capabilities.dot11r
+      - capabilities.wpa3_enforced
+    discriminators: >
+      Failures localize to boundaries between AP populations with differing
+      capability sets, rather than tracking RF quality. Compare the capabilities
+      block against same-ESS neighbours.
+    confusable_with: [RF-XB-004, RF-XB-005]
+    remediation_intent:
+      - Establish the lowest common denominator of feature support across the fleet and configure the ESS to it, or segment by SSID.
+      - Where segmentation is not viable, place vendor or generation boundaries at physical breaks in coverage rather than mid-cell.
+      - Do not enable a feature on part of an ESS only; partial support is often worse than uniform absence.
+    severity_default: medium
+
+  - id: RF-CG-002
+    name: Inconsistent 6 GHz readiness across a mixed fleet
+    bands: [6GHz]
+    description: >
+      Some APs support 6 GHz, some support it without AFC, and some not at all.
+      The resulting 6 GHz coverage is patchy and discontinuous, so clients
+      associate and drop unpredictably as they move.
+    required_evidence:
+      # v0.1.0 gate was static capability fields (bands_supported, afc_supported)
+      # — true of any single compliant radio and provable only at fleet level,
+      # not from one snapshot. Reworked to gate on the observed client-visible
+      # symptom (band churn) instead, since a single-radio capability snapshot
+      # cannot by itself demonstrate fleet-wide patchiness.
+      - path: 'clients.band_distribution["6GHz"]'
+        predicate: present
+      - path: clients.roam_failures_5m
+        predicate: ">"
+        value: 0
+    supporting_evidence:
+      - neighbors[].vendor_hint
+      - radio.power_mode
+      - clients.band_distribution
+      - clients.roam_failures_5m
+    discriminators: >
+      6 GHz coverage exists in islands rather than as continuous coverage.
+      Clients repeatedly transition between 6 GHz and lower bands.
+    confusable_with: [RF-6-003, RF-CG-001]
+    remediation_intent:
+      - Map actual 6 GHz coverage before enabling the band for production SSIDs; discontinuous 6 GHz is worse than none.
+      - Enable 6 GHz only in contiguous areas where coverage is continuous, and expand as the fleet is refreshed.
+    severity_default: medium
+
+# ============================================================
+# Output contract for the model
+# ============================================================
+output_contract:
+  required_fields:
+    - cause_id            # must exist in this taxonomy
+    - confidence          # low | medium | high
+    - evidence            # list of {field_path, observed_value, why_it_matters}
+    - affected_bands
+    - remediation         # drawn from remediation_intent, adapted to evidence
+    - data_gaps           # canonical fields that would raise confidence if present
+  rules:
+    - Never assert a cause whose required_evidence predicates do not ALL hold against the input snapshot. Report the data gap instead.
+    - A cause whose predicates all hold is assertion-ELIGIBLE, not assertion-MANDATORY — passing the gate is necessary, never sufficient. Rank eligible candidates and apply discriminators before choosing what to report; do not treat gate-passing itself as the diagnosis.
+    - Rank multiple plausible causes rather than forcing a single answer.
+    - Cite regulatory or IEEE facts from the retrieval corpus; never state a channel, power or threshold limit from parametric memory alone.
+    - Remediation is intent, not configuration syntax.
+    - If RF metrics are healthy and the symptom persists, prefer RF-XB-007 over further RF tuning.
