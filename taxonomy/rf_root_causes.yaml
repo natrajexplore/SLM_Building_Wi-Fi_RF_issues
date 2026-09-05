@@ -15,9 +15,20 @@
 #                        all hold against the input snapshot before this cause
 #                        is eligible to be asserted. v0.2.0: no longer bare
 #                        schema paths — see grammar block immediately below.
-#   supporting_evidence canonical schema paths that raise confidence when
-#                        present. Unchanged format — still bare paths, not
-#                        predicates. These never gate assertion.
+#   supporting_evidence  canonical schema signals that raise confidence when
+#                        present. Unchanged since v0.1.0 and NOT part of the
+#                        required_evidence predicate grammar below: most
+#                        entries are bare paths, but some are an informal
+#                        `path == value` / `path in [values]` shorthand for
+#                        "this event type occurred" (e.g.
+#                        `events[].type == channel_change`). That shorthand
+#                        is prose for a human/model reading discriminators
+#                        text, not a structured predicate object -- nothing
+#                        parses it mechanically, and it never gates
+#                        assertion. Do not extend the required_evidence
+#                        predicate parser to also accept these lines; treat
+#                        the leading path segment as the field being pointed
+#                        at and the rest as descriptive.
 #   discriminators      how to tell this apart from its confusables
 #   confusable_with      other cause ids commonly mistaken for this one
 #   remediation_intent  vendor-neutral action statements — NEVER CLI

@@ -1,1 +1,2 @@
 jsonschema>=4.18
+rfc3339-validator>=0.1.4  # required for jsonschema's "date-time" format check to actually run

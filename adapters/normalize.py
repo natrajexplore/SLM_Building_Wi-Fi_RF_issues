@@ -73,7 +73,13 @@ def _validator() -> jsonschema.protocols.Validator:
     schema = load_schema()
     validator_cls = jsonschema.validators.validator_for(schema)
     validator_cls.check_schema(schema)
-    return validator_cls(schema)
+    # Without an explicit FormatChecker, jsonschema never enforces "format"
+    # keywords (format is advisory-only per spec unless a checker is wired
+    # in) -- so timestamp / events[].timestamp's "format": "date-time" would
+    # silently accept garbage strings. "date-time" specifically also needs
+    # the rfc3339-validator package registered (see requirements.txt); it is
+    # NOT present in jsonschema.FormatChecker() out of the box.
+    return validator_cls(schema, format_checker=jsonschema.FormatChecker())
 
 
 def validate_canonical(snapshot: dict) -> None:
@@ -127,6 +133,14 @@ def canonical_field_paths() -> tuple[str, ...]:
             # has no fixed sub-paths to walk into and must be tracked as a
             # leaf, same as an array; otherwise it silently vanishes from
             # the path set instead of being tracked at all.
+            #
+            # `name not in _ARRAY_FIELDS` is redundant today: every current
+            # member of _ARRAY_FIELDS has schema type "array", so
+            # `sub.get("type") == "object"` already excludes it before this
+            # clause is even reached. It is kept as defense-in-depth for a
+            # schema revision that ever models one of those fields as an
+            # object with `properties` while it is still logically a
+            # collection -- see test_array_fields_tracked_whole_not_walked_into.
             if sub.get("type") == "object" and "properties" in sub and name not in _ARRAY_FIELDS:
                 walk(sub, path)
             else:
@@ -146,7 +160,16 @@ def _get_by_path(snapshot: dict, path: str) -> Any:
 
 
 def compute_missing_fields(snapshot: dict) -> list[str]:
-    """Canonical field paths absent (or explicitly null) from `snapshot`.
+    """Canonical field paths absent from `snapshot`.
+
+    A field is "missing" when its key is not present in the snapshot at all
+    -- omit it, do not set it to `None`/null. The canonical schema does not
+    permit null for any typed field, so a field explicitly set to null will
+    make validate_canonical() reject the whole snapshot later in the same
+    to_canonical() pipeline, even though it is correctly reported here.
+    (`_get_by_path` treats a null value the same as an absent key only so
+    that mistake surfaces as an accurate missing_fields entry rather than a
+    KeyError -- it is not an invitation to use null on purpose.)
 
     This is a mechanical presence check against the schema's full field set,
     not a judgement about the source platform's actual capability. An

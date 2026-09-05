@@ -133,6 +133,20 @@ class AdapterContractTests(unittest.TestCase):
         with self.assertRaises(SchemaValidationError):
             SchemaInvalidAdapter().to_canonical(raw={})
 
+    def test_malformed_timestamp_is_rejected(self):
+        # Regression: without an explicit FormatChecker, jsonschema never
+        # enforces "format": "date-time" and this used to validate silently.
+        class BadTimestampAdapter(Adapter):
+            name = "test_bad_timestamp"
+
+            def _translate(self, raw):
+                snapshot = {**MINIMAL_SNAPSHOT, "timestamp": "not-a-valid-date-time-at-all"}
+                snapshot["analysis_context"] = {"spectrum_capable": True}
+                return snapshot
+
+        with self.assertRaises(SchemaValidationError):
+            BadTimestampAdapter().to_canonical(raw={})
+
     def test_mac_outside_known_identifier_fields_is_caught(self):
         with self.assertRaises(PseudonymisationError):
             LeakyMacAdapter().to_canonical(raw={})
