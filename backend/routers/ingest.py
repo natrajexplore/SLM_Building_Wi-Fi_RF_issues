@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from adapters.base import ContractViolation
+from adapters.esp32 import Esp32Adapter
 from adapters.generic_csv import CsvMapping, CsvMappingError, GenericCsvAdapter
 from adapters.generic_json import GenericJsonAdapter, JsonMapping, JsonMappingError
 from adapters.normalize import PseudonymisationError, SchemaValidationError
@@ -21,13 +22,17 @@ router = APIRouter()
 def ingest(req: IngestRequest) -> IngestResponse:
     try:
         if req.format == "csv":
-            if req.rows is None:
-                raise HTTPException(422, "csv ingest requires `rows`")
+            if req.rows is None or req.mapping is None:
+                raise HTTPException(422, "csv ingest requires `rows` and `mapping`")
             adapter = GenericCsvAdapter(CsvMapping.from_dict(req.mapping))
             snapshots = [adapter.to_canonical(r) for r in req.rows]
-        else:
+        elif req.format == "esp32":
             if req.document is None:
-                raise HTTPException(422, "json ingest requires `document`")
+                raise HTTPException(422, "esp32 ingest requires `document` (the probe JSON)")
+            snapshots = [Esp32Adapter().to_canonical(req.document)]  # no mapping needed
+        else:
+            if req.document is None or req.mapping is None:
+                raise HTTPException(422, "json ingest requires `document` and `mapping`")
             adapter = GenericJsonAdapter(JsonMapping.from_dict(req.mapping))
             snapshots = [adapter.to_canonical(req.document)]
     except (CsvMappingError, JsonMappingError) as exc:

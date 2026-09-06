@@ -1,0 +1,22 @@
+// Copy to config.h and edit. config.h is git-ignored.
+#pragma once
+
+// --- network (required: SNTP time + optional POST) ---
+#define WIFI_SSID   "your-ssid"
+#define WIFI_PASS   "your-pass"
+
+// --- what to sample ---
+#define PROBE_CHANNEL      6      // 1..13
+#define CHANNEL_WIDTH_MHZ  20     // 20 or 40
+#define SAMPLE_WINDOW_MS   3000   // promiscuous capture length
+#define BLE_SCAN_SECONDS   3
+
+// --- optional ---
+// If set, briefly associate to this SSID to read link RSSI and mark same_ess.
+// #define STA_SSID  "corp"
+
+// If set, POST each sample as {"format":"esp32","document":{...}}.
+// Leave undefined for Serial-only output.
+// #define BACKEND_URL  "http://192.168.1.50:8000/ingest"
+
+#define SAMPLE_PERIOD_MS  15000   // delay between samples in loop()

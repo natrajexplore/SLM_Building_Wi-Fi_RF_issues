@@ -59,7 +59,11 @@ What actually exists:
   turns a nested vendor JSON doc into one snapshot.
 - `adapters/_common.py` — schema-type introspection + value coercion shared by
   both generic adapters. Example mappings: `adapters/generic_*.example.map.yaml`.
-- **No vendor-specific adapter yet** — not `cisco_c9800.py`.
+- `adapters/esp32.py` — `Esp32Adapter`: `hardware/esp32_rf_probe` JSON → snapshot.
+  2.4 GHz only, `spectrum_capable` always false, BLE scan → `non_wifi_interferers`
+  bluetooth hint, beacon IEs → regulatory_domain / min rate / CSA events. Firmware
+  + JSON spec in `hardware/esp32_rf_probe/`. `POST /ingest {format:"esp32"}`.
+- **No WLC-vendor adapter yet** — not `cisco_c9800.py`.
 - `data/` — phase-4 synthetic generator, complete and runnable
   (`predicates.py`, `snapshots.py`, `scenarios.py`, `prompts.py`,
   `teacher.py`, `generate.py`). Teacher is a local Ollama model with an
@@ -140,6 +144,7 @@ rf-slm/
 │   ├── _common.py                   # schema introspection + coercion (shared) [done]
 │   ├── generic_csv.py               # flat CSV row, scalar fields              [done]
 │   ├── generic_json.py              # nested JSON incl. array fields           [done]
+│   ├── esp32.py                     # ESP32 RF probe -> snapshot (2.4 GHz)     [done]
 │   ├── cisco_c9800.py               # BUILD NEXT — validation source (pyATS available)
 │   ├── aruba_central.py
 │   └── mist.py
@@ -178,10 +183,13 @@ rf-slm/
 │   ├── src/App.tsx
 │   └── src/components/{SnapshotInput,DiagnosisView,EvidenceChain,
 │                        CitationList,ExplanationPanel,ConfidenceBadge,Section}.tsx
+├── hardware/
+│   └── esp32_rf_probe/              # Arduino firmware + JSON spec for esp32.py [done]
 └── tests/
     ├── test_adapters_base.py        # [done]
     ├── test_generic_csv.py          # [done]
     ├── test_generic_json.py         # [done]
+    ├── test_esp32.py                # [done]
     ├── test_predicates.py           # [done]
     ├── test_data_generation.py      # [done]
     ├── test_training.py             # [done]

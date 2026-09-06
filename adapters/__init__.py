@@ -10,8 +10,11 @@ Concrete adapters:
     Scalar fields only.
   - generic_json.GenericJsonAdapter — nested vendor JSON + path mapping ->
     snapshot, including the array-typed fields (events, neighbors, …).
+  - esp32.Esp32Adapter — `hardware/esp32_rf_probe` JSON -> snapshot. 2.4 GHz
+    only, spectrum_capable always false; real source for the RF-24-* causes.
 
-`adapters/_common.py` holds the schema introspection + coercion both share.
+`adapters/_common.py` holds the schema introspection + coercion the generic
+adapters share.
 
 Still to build: cisco_c9800, aruba_central, mist.
 """

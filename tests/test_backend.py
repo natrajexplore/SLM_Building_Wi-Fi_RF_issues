@@ -84,6 +84,29 @@ class HealthAndIngest(BackendTestCase):
         r = self.client.post("/ingest", json={"format": "csv", "mapping": bad, "rows": [{"x": "y"}]})
         self.assertEqual(r.status_code, 422)
 
+    def test_ingest_esp32(self):
+        doc = {
+            "collected_at": "2026-03-01T12:00:00Z", "channel": 6, "channel_width_mhz": 20,
+            "sample_window_ms": 3000,
+            "scan": [
+                {"bssid": "aa:bb:cc:00:00:01", "ssid": "corp", "channel": 6, "rssi": -55},
+                {"bssid": "aa:bb:cc:00:00:02", "ssid": "corp", "channel": 6, "rssi": -67},
+                {"bssid": "aa:bb:cc:00:00:03", "ssid": "x", "channel": 6, "rssi": -71},
+            ],
+            "sniff": {"frames_total": 1000, "frames_retry": 120, "noise_floor_dbm_avg": -85.0,
+                      "airtime_us": 1_500_000, "unique_tx": 8},
+        }
+        r = self.client.post("/ingest", json={"format": "esp32", "document": doc})
+        self.assertEqual(r.status_code, 200, r.text)
+        snap = r.json()["snapshots"][0]
+        self.assertEqual(snap["radio"]["band"], "2.4GHz")
+        self.assertIs(snap["analysis_context"]["spectrum_capable"], False)
+        self.assertEqual(snap["rf_metrics"]["co_channel_neighbors"], 3)
+
+    def test_ingest_esp32_missing_document_is_422(self):
+        r = self.client.post("/ingest", json={"format": "esp32"})
+        self.assertEqual(r.status_code, 422)
+
 
 class Diagnose(BackendTestCase):
     def test_valid_diagnosis_passes_through_and_uses_fixed_low_temperature(self):

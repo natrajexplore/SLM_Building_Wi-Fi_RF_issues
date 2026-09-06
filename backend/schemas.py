@@ -85,10 +85,10 @@ class ExplainResponse(BaseModel):
 
 class IngestRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    format: Literal["csv", "json"]
-    mapping: dict[str, Any]
+    format: Literal["csv", "json", "esp32"]
+    mapping: dict[str, Any] | None = None     # required for csv/json, unused for esp32
     rows: list[dict[str, Any]] | None = None  # csv: list of row dicts
-    document: dict[str, Any] | None = None    # json: one vendor doc
+    document: dict[str, Any] | None = None    # json / esp32: one source doc
 
 
 class IngestResponse(BaseModel):

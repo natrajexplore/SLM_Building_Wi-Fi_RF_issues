@@ -23,3 +23,6 @@ venv/
 # local dev scratch
 /backend/_*.log
 /frontend/_*.json
+
+# ESP32 firmware — real secrets live here
+/hardware/esp32_rf_probe/config.h
