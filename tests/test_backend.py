@@ -133,6 +133,33 @@ class BackendSelection(unittest.TestCase):
         with self.assertRaises(BackendError):
             build_backend(replace(get_settings(), model_backend="nope"))
 
+    def test_reference_backend_produces_a_contract_valid_diagnosis(self):
+        from dataclasses import replace
+
+        from backend.inference import run_diagnosis
+
+        snap, held = _eligible_snapshot("RF-24-001")
+        cfg = replace(get_settings(), model_backend="reference", rag_enabled=False)
+        result = run_diagnosis(snap, build_backend(cfg), cfg, retriever=None)
+        self.assertEqual(result.cause_id, "RF-24-001")
+        self.assertTrue(result.evidence)
+        self.assertTrue(all(e.field_path in held for e in result.evidence))
+
+    def test_reference_backend_abstains_when_nothing_is_eligible(self):
+        from dataclasses import replace
+
+        from backend.inference import run_diagnosis
+
+        # a healthy 5 GHz snapshot satisfies no cause's required_evidence
+        from data.snapshots import healthy_baseline
+        snap = healthy_baseline("5GHz", random.Random(0))
+        snap["analysis_context"]["spectrum_capable"] = False
+        generate._finalise_snapshot(snap)
+        cfg = replace(get_settings(), model_backend="reference", rag_enabled=False)
+        result = run_diagnosis(snap, build_backend(cfg), cfg, retriever=None)
+        self.assertIsNone(result.cause_id)
+        self.assertTrue(result.data_gaps)
+
     def test_adapter_backend_without_a_trained_adapter_raises_clearly(self):
         from dataclasses import replace
 

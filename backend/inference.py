@@ -73,6 +73,67 @@ class StubBackend:
         return self._responses.pop(0) if self._responses else "{}"
 
 
+class ReferenceBackend:
+    """Deterministic ground-truth-quality diagnoses — NOT a language model.
+
+    Runs the same predicate/evidence logic the phase-4 dataset was built with:
+    finds every assertion-eligible cause, ranks by severity, and emits a
+    contract-valid RCA (or an abstention when nothing is eligible). It exists so
+    the frontend and the pipeline can be exercised with realistic output before
+    the phase-5 fine-tune exists — a "this is the target" reference, not the
+    product. Select with RF_SLM_BACKEND=reference.
+    """
+
+    _SEV = {"high": 3, "medium": 2, "low": 1}
+
+    def generate(self, system: str, user: str, *, temperature: float) -> str:
+        from data import predicates, scenarios
+        from data.taxonomy_loader import all_cause_ids, cause as get_cause
+
+        try:
+            snapshot = json.loads(user.split("\nCanonical RF snapshot:\n", 1)[1])
+        except (IndexError, json.JSONDecodeError):
+            return json.dumps({"cause_id": None, "confidence": "low", "evidence": [],
+                               "affected_bands": [], "remediation": [], "data_gaps": []})
+
+        band = snapshot.get("radio", {}).get("band")
+        eligible = [c for c in all_cause_ids() if predicates.required_evidence_met(snapshot, get_cause(c))]
+        eligible.sort(key=lambda c: self._SEV.get(get_cause(c).get("severity_default"), 0), reverse=True)
+
+        if not eligible:
+            gaps = sorted({
+                p for c in all_cause_ids() if band in get_cause(c)["bands"]
+                for p in predicates.evidence_paths(get_cause(c))
+            })[:6]
+            return json.dumps({
+                "cause_id": None, "confidence": "low", "evidence": [],
+                "affected_bands": [band] if band else [],
+                "remediation": ["Collect the gating telemetry for the closest-matching "
+                                "causes before asserting one."],
+                "data_gaps": gaps,
+            })
+
+        primary, cause = eligible[0], get_cause(eligible[0])
+        held = scenarios._held_evidence_paths(snapshot, cause)
+        evidence = [{
+            "field_path": p,
+            "observed_value": scenarios._observed(snapshot, p),
+            "why_it_matters": f"The observed {predicates.parse_path(p)[-1][0]} is in the "
+                              f"range this cause requires.",
+        } for p in held]
+        out = {
+            "cause_id": primary,
+            "confidence": "high" if cause.get("severity_default") == "high" and len(eligible) == 1 else "medium",
+            "evidence": evidence,
+            "affected_bands": [band] if band else list(cause["bands"]),
+            "remediation": list(cause.get("remediation_intent", [])),
+            "data_gaps": scenarios._supporting_gaps(snapshot, cause),
+        }
+        if len(eligible) > 1:
+            out["ranked_alternatives"] = [{"cause_id": c, "confidence": "low"} for c in eligible[1:3]]
+        return json.dumps(out)
+
+
 class AdapterBackend:
     """Base model + the phase-5 QLoRA adapter, loaded once and held in memory.
 
@@ -131,6 +192,8 @@ def build_backend(cfg: Settings) -> ModelBackend:
         return StubBackend()
     if cfg.model_backend == "ollama":
         return OllamaBackend(cfg.diagnose_model, cfg.ollama_host, cfg.generate_timeout)
+    if cfg.model_backend == "reference":
+        return ReferenceBackend()
     if cfg.model_backend == "adapter":
         return AdapterBackend(cfg)
     raise BackendError(f"unknown model backend {cfg.model_backend!r}")

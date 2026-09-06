@@ -55,6 +55,7 @@ def health() -> dict:
     model = {
         "ollama": cfg.diagnose_model,
         "adapter": str(cfg.adapter_dir),
+        "reference": "reference (deterministic, not the SLM)",
         "stub": "stub",
     }.get(cfg.model_backend, cfg.diagnose_model)
 

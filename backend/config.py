@@ -17,7 +17,7 @@ REPO = Path(__file__).resolve().parent.parent
 @dataclass(frozen=True)
 class Settings:
     # model backend
-    model_backend: str = os.environ.get("RF_SLM_BACKEND", "ollama")  # ollama | adapter | stub
+    model_backend: str = os.environ.get("RF_SLM_BACKEND", "ollama")  # ollama | adapter | reference | stub
     diagnose_model: str = os.environ.get("RF_SLM_DIAGNOSE_MODEL", "qwen2.5:7b-instruct")
     explain_model: str = os.environ.get("RF_SLM_EXPLAIN_MODEL", "qwen2.5:7b-instruct")
     ollama_host: str = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
