@@ -3,3 +3,23 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+
+# Generated synthetic dataset (phase 4) — regenerate with `python -m data.generate`.
+# Not committed: it is large, teacher-model dependent, and reproducible from seed.
+/data/train.jsonl
+/data/eval.jsonl
+/data/generation_report.json
+/data/_generated.jsonl
+/data/_generated.meta.json
+/data/_run.log
+/data/scenarios/
+
+# QLoRA outputs (phase 5).
+/training/out/
+
+# RAG index (phase 6) — rebuilt from rag/corpus/ with `python -m rag.ingest`.
+/rag/index/
+
+# local dev scratch
+/backend/_*.log
+/frontend/_*.json

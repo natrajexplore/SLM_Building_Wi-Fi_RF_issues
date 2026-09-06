@@ -1,0 +1,52 @@
+# Example mapping for adapters/generic_json.GenericJsonAdapter.
+#
+#   from adapters.generic_json import GenericJsonAdapter, JsonMapping
+#   mapping = JsonMapping.from_yaml("adapters/generic_json.example.map.yaml")
+#   snapshot = GenericJsonAdapter(mapping).to_canonical(vendor_doc)
+#
+# `from` paths are dot-separated object traversals into the vendor document.
+# A missing source is skipped (-> missing_fields / absent array), never invented.
+# Unknown canonical targets fail at construction; bad values fail schema validation.
+
+spectrum_capable: true
+
+constants:
+  radio.band: "5GHz"
+  snapshot_id: "unknown"          # override per document if the source has an id
+
+scalars:
+  - { from: "ap.id",                 to: "radio.ap_id" }
+  - { from: "ap.collectedAt",        to: "timestamp" }
+  - { from: "radio.primaryChannel",  to: "radio.channel" }
+  - { from: "radio.widthMHz",        to: "radio.channel_width_mhz" }
+  - { from: "radio.txPowerDbm",      to: "radio.tx_power_dbm" }
+  - { from: "radio.dfs",             to: "radio.dfs_required" }
+  - { from: "metrics.noiseFloorDbm", to: "rf_metrics.noise_floor_dbm" }
+  - { from: "metrics.channelUtil",   to: "rf_metrics.channel_utilization_pct" }
+  - { from: "metrics.retryRate",     to: "rf_metrics.retry_rate_pct" }
+  - { from: "clients.total",         to: "clients.count" }
+  - { from: "clients.avgSnr",        to: "clients.avg_snr_db" }
+
+arrays:
+  - from: "spectrumEvents"
+    to: "events"
+    element:
+      - { from: "type",     to: "type" }        # must match the schema enum
+      - { from: "time",     to: "timestamp" }
+      - { from: "fromChan", to: "channel_from" }
+      - { from: "toChan",   to: "channel_to" }
+      - { from: "note",     to: "detail" }
+  - from: "neighborBss"
+    to: "neighbors"
+    element:
+      - { from: "bssid",     to: "bss_ref" }     # pseudonymised downstream
+      - { from: "channel",   to: "channel" }
+      - { from: "rssiDbm",   to: "rssi_dbm" }
+      - { from: "sameEss",   to: "same_ess" }
+      - { from: "vendor",    to: "vendor_hint" }
+  - from: "interferers"
+    to: "non_wifi_interferers"
+    element:
+      - { from: "kind",      to: "type" }
+      - { from: "severity",  to: "severity" }
+      - { from: "dutyCycle", to: "duty_cycle_pct" }

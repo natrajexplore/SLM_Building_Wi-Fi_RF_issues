@@ -171,7 +171,10 @@ causes:
         threshold: cci_neighbor_concern
       - path: rf_metrics.channel_utilization_pct
         predicate: ">="
-        threshold: utilization_elevated_pct
+        threshold: utilization_saturated_pct   # GATE, not utilization_elevated_pct
+                                               # (descriptive only) — see header rule
+                                               # and RF-24-006, which gates the same
+                                               # field identically
     supporting_evidence:
       - rf_metrics.channel_utilization_pct
       - rf_metrics.rx_utilization_pct
@@ -987,16 +990,55 @@ causes:
 # ============================================================
 output_contract:
   required_fields:
-    - cause_id            # must exist in this taxonomy
+    - cause_id            # must exist in this taxonomy (or be null — see `abstention`)
     - confidence          # low | medium | high
     - evidence            # list of {field_path, observed_value, why_it_matters}
     - affected_bands
     - remediation         # drawn from remediation_intent, adapted to evidence
     - data_gaps           # canonical fields that would raise confidence if present
+
+  # ----------------------------------------------------------------------
+  # optional_fields — additive in v0.2.0, does NOT touch cause_id stability.
+  # ----------------------------------------------------------------------
+  optional_fields:
+    - ranked_alternatives  # list of {cause_id, confidence}, most→least likely,
+                           # EXCLUDING the primary cause_id. Populated whenever
+                           # more than one cause is assertion-eligible and the
+                           # discriminators do not cleanly separate them. This
+                           # is how the "rank, don't force one answer" rule is
+                           # represented in structured output; the Top-3 metric
+                           # on ambiguous cases scores {cause_id} ∪
+                           # {ranked_alternatives[].cause_id}.
+
+  # ----------------------------------------------------------------------
+  # abstention — first-class per CLAUDE.md's evaluation targets, not an edge
+  # case. When NO cause has all its required_evidence predicates satisfied
+  # from the snapshot, the model MUST abstain rather than assert the
+  # closest-looking cause.
+  # ----------------------------------------------------------------------
+  abstention:
+    shape:
+      cause_id: null       # explicit null, never a taxonomy id, never a
+                           # sentinel string — a null cause_id IS the
+                           # abstention signal
+      confidence: low      # abstention is always low confidence
+      data_gaps: [...]     # MUST be non-empty: the canonical field paths whose
+                           # absence blocks a confident call (typically the
+                           # unsatisfied required_evidence paths of the
+                           # otherwise best-matching cause)
+      evidence: [...]      # may cite what IS present, but every field_path
+                           # must still resolve in the snapshot
+      remediation: [...]   # only "collect <missing data>" style actions, never
+                           # an RF change justified by evidence that isn't there
+    rule: >
+      A snapshot with the required evidence for its nearest cause removed is a
+      hard abstention test. Asserting any cause_id on it is a failure, scored
+      separately from Top-1 accuracy.
+
   rules:
-    - Never assert a cause whose required_evidence predicates do not ALL hold against the input snapshot. Report the data gap instead.
+    - Never assert a cause whose required_evidence predicates do not ALL hold against the input snapshot. Abstain (cause_id null, see `abstention`) and report the data gap instead.
     - A cause whose predicates all hold is assertion-ELIGIBLE, not assertion-MANDATORY — passing the gate is necessary, never sufficient. Rank eligible candidates and apply discriminators before choosing what to report; do not treat gate-passing itself as the diagnosis.
-    - Rank multiple plausible causes rather than forcing a single answer.
+    - Rank multiple plausible causes rather than forcing a single answer — use `ranked_alternatives`.
     - Cite regulatory or IEEE facts from the retrieval corpus; never state a channel, power or threshold limit from parametric memory alone.
     - Remediation is intent, not configuration syntax.
     - If RF metrics are healthy and the symptom persists, prefer RF-XB-007 over further RF tuning.

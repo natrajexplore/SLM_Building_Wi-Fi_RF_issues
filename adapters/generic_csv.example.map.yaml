@@ -1,0 +1,37 @@
+# Example column mapping for adapters/generic_csv.GenericCsvAdapter.
+#
+#   from adapters.generic_csv import CsvMapping, snapshots_from_csv
+#   mapping = CsvMapping.from_yaml("adapters/generic_csv.example.map.yaml")
+#   for snapshot in snapshots_from_csv("export.csv", mapping):
+#       ...
+#
+# Every `path` must be a SCALAR canonical field (see schema/canonical_rf.schema.json).
+# Array fields (events, neighbors, client_samples, non_wifi_interferers) are not
+# supported here by design — use generic_json or a vendor adapter for those.
+
+spectrum_capable: false          # REQUIRED. A flat CSV can't tell us; state it.
+
+constants:                       # canonical path -> literal, applied to every row
+  radio.band: "5GHz"
+  site.environment: "office"
+
+columns:
+  - { column: "AP Name",            path: "radio.ap_id" }
+  - { column: "Radio MAC",          path: "radio.radio_id" }     # pseudonymised downstream
+  - { column: "Channel",            path: "radio.channel" }       # -> integer (from schema)
+  - { column: "Channel Width",      path: "radio.channel_width_mhz" }
+  - { column: "Tx Power (dBm)",     path: "radio.tx_power_dbm" }
+  - { column: "Noise Floor (dBm)",  path: "rf_metrics.noise_floor_dbm" }
+  - { column: "Channel Util %",     path: "rf_metrics.channel_utilization_pct" }
+  - { column: "Retry Rate %",       path: "rf_metrics.retry_rate_pct" }
+  - { column: "Co-Channel APs",     path: "rf_metrics.co_channel_neighbors" }
+  - { column: "Client Count",       path: "clients.count" }
+  - { column: "Avg SNR",            path: "clients.avg_snr_db", coerce: "float" }
+  - { column: "DFS Channel",        path: "radio.dfs_required" }   # yes/no -> bool
+  - { column: "Collected At",       path: "timestamp" }            # must be RFC3339
+  - { column: "Snapshot ID",        path: "snapshot_id" }
+
+# Optional token overrides (defaults shown):
+# null_tokens: ["", "n/a", "na", "null", "none", "-", "--", "unknown"]
+# bool_true:   ["true", "t", "yes", "y", "1", "enabled", "on"]
+# bool_false:  ["false", "f", "no", "n", "0", "disabled", "off"]

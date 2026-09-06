@@ -195,12 +195,47 @@ _PSEUDONYM_SALT = os.environ.get(
     "rf-slm-dev-salt-set-RF_SLM_PSEUDONYM_SALT-for-anything-real",
 )
 
-_MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$")
+# Not anchored: a MAC embedded in free text (an `events[].detail` string, a
+# `vendor_hint`, a capability entry) must still be caught by the defensive
+# scan below -- that is the whole point of scanning every string rather than
+# just the two known identifier fields. The alternation covers both the
+# colon/hyphen octet form and Cisco's three-group dotted form (aabb.ccdd.eeff),
+# which IOS-XE / pyATS emit natively. The hex-boundary lookarounds keep it from
+# matching a fragment of a longer hex-and-colon run (e.g. an IPv6 address).
+_MAC_RE = re.compile(
+    r"(?<![0-9A-Fa-f])"
+    r"(?:[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}"
+    r"|[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4})"
+    r"(?![0-9A-Fa-f])"
+)
 
 
 def looks_like_real_mac(value: str) -> bool:
-    """True if `value` has the shape of an unpseudonymised MAC address."""
-    return isinstance(value, str) and bool(_MAC_RE.match(value))
+    """True if `value` contains something shaped like an unpseudonymised MAC.
+
+    Substring match, not whole-string: an identifier buried in an otherwise
+    free-text field still counts.
+    """
+    return isinstance(value, str) and bool(_MAC_RE.search(value))
+
+
+def _canonical_mac(real_id: str) -> str:
+    """Fold textual variants of one MAC to a single form before hashing.
+
+    `AA:BB:CC:DD:EE:FF`, `aa-bb-cc-dd-ee-ff` and Cisco's `aabb.ccdd.eeff` are
+    the same physical identifier; hashing them verbatim would produce three
+    different pseudonyms and silently break the cross-snapshot correlation
+    that pseudonymise() promises. Anything that is not 12 hex digits once
+    separators are stripped is returned unchanged.
+    """
+    stripped = re.sub(r"[:.\-]", "", real_id)
+    if len(stripped) == 12:
+        try:
+            int(stripped, 16)
+        except ValueError:
+            return real_id
+        return stripped.lower()
+    return real_id
 
 
 def pseudonymise(real_id: str, *, prefix: str) -> str:
@@ -209,10 +244,14 @@ def pseudonymise(real_id: str, *, prefix: str) -> str:
     Keyed with HMAC-SHA256 under a salt so the real value cannot be recovered
     from the output, while the same real_id still maps to the same pseudonym
     within one salt -- repeat sightings of a client or BSS correlate across
-    snapshots without ever carrying the original identifier.
+    snapshots without ever carrying the original identifier. The identifier is
+    canonicalised first (see _canonical_mac) so the same MAC in different
+    textual forms correlates rather than fragmenting into distinct pseudonyms.
     """
     digest = hmac.new(
-        _PSEUDONYM_SALT.encode("utf-8"), real_id.encode("utf-8"), hashlib.sha256
+        _PSEUDONYM_SALT.encode("utf-8"),
+        _canonical_mac(real_id).encode("utf-8"),
+        hashlib.sha256,
     ).hexdigest()[:16]
     return f"{prefix}-{digest}"
 

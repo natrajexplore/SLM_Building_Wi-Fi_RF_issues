@@ -1,2 +1,8 @@
 jsonschema>=4.18
 rfc3339-validator>=0.1.4  # required for jsonschema's "date-time" format check to actually run
+PyYAML>=6            # taxonomy/rf_root_causes.yaml is read by data/ and training/evaluate.py
+numpy>=1.26          # rag/ index vectors and similarity search
+faiss-cpu>=1.8       # rag/retriever.py search accelerator; retriever falls back to numpy if absent
+fastapi>=0.115       # backend/
+uvicorn>=0.30        # backend/ ASGI server
+httpx>=0.27          # fastapi TestClient (used by tests/test_backend.py)

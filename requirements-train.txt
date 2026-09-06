@@ -1,0 +1,14 @@
+# Phase 5 (QLoRA fine-tune) ONLY. Deliberately NOT in requirements.txt — the
+# core repo (schema, taxonomy, adapters, data generation, evaluation metrics)
+# must stay installable without a CUDA toolchain.
+#
+# Install on the GPU box:  pip install -r requirements.txt -r requirements-train.txt
+# bitsandbytes needs a CUDA GPU; the rest will import on CPU for --dry-run.
+
+torch>=2.3
+transformers>=4.44
+peft>=0.12
+bitsandbytes>=0.43          # CUDA-only; 4-bit QLoRA
+accelerate>=0.33
+trl>=0.9
+datasets>=2.20

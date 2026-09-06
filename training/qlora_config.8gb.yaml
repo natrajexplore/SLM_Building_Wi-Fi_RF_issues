@@ -1,0 +1,72 @@
+# Low-VRAM QLoRA preset — for an 8 GB card (RTX 3050/3060/4060 laptop, RTX 3070).
+#
+#   python -m training.train --config training/qlora_config.8gb.yaml
+#
+# Differences from qlora_config.yaml, all to cut peak VRAM:
+#   - per_device_train_batch_size 1 (was 4); grad-accum 32 keeps the effective
+#     batch at 32, so the optimisation is identical, just slower per step.
+#   - LoRA r/alpha halved to 8/16 — small memory + compute saving; for a task
+#     this narrow the quality cost is negligible.
+#   - max_seq_length 1536 — the longest real example is 1528 tokens, so nothing
+#     is truncated, and shorter sequences are the biggest single VRAM lever.
+#   - eval batch pinned to 1 as well.
+#
+# Expected peak: ~6-7 GB. If you still OOM, drop max_seq_length to 1280 (loses
+# ~2% of examples' tails) or set gradient_checkpointing already-on / lower r to 4.
+#
+# TURING CARDS (T4, RTX 20xx): they have no bf16. Set bf16:false, and
+# bnb_4bit_compute_dtype: "float16". Ampere and newer (RTX 30xx/40xx) keep bf16.
+
+base_model: "Qwen/Qwen2.5-1.5B-Instruct"
+
+data:
+  train_file: "data/train.jsonl"
+  eval_file: "data/eval.jsonl"
+  max_seq_length: 1536
+  mask_prompt: true
+
+quantization:
+  load_in_4bit: true
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_use_double_quant: true
+  bnb_4bit_compute_dtype: "bfloat16"     # -> "float16" on Turing (T4, RTX 20xx)
+
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.05
+  bias: "none"
+  task_type: "CAUSAL_LM"
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+training:
+  output_dir: "training/out"
+  num_train_epochs: 3
+  per_device_train_batch_size: 1
+  per_device_eval_batch_size: 1
+  gradient_accumulation_steps: 32        # effective batch 32, same as the default config
+  learning_rate: 2.0e-4
+  lr_scheduler_type: "cosine"
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  logging_steps: 10
+  eval_strategy: "steps"
+  eval_steps: 50
+  save_strategy: "steps"
+  save_steps: 50
+  save_total_limit: 3
+  bf16: true                             # -> false on Turing (T4, RTX 20xx)
+  gradient_checkpointing: true
+  optim: "paged_adamw_8bit"
+  seed: 7
+
+generation_defaults:
+  diagnose_temperature: 0.15
+  explain_temperature: 0.8

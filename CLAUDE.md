@@ -44,24 +44,84 @@ not state a numeric limit from parametric memory.
 
 ## Current state vs. target layout
 
-We are midway through Build order phase 3 (adapters) below. What actually
-exists: `schema/canonical_rf.schema.json`, `taxonomy/rf_root_causes.yaml`
-(v0.2.0 — see the predicate-grammar note under Conventions), and
-`adapters/base.py` + `adapters/normalize.py` (the Adapter ABC and its shared
-validation/missing-fields/pseudonymisation logic, with smoke tests in
-`tests/test_adapters_base.py`). **No concrete vendor adapter exists yet** —
-not `generic_csv.py`, not `cisco_c9800.py`, nothing under `data/`,
-`training/`, `rag/`, `backend/`, or `frontend/`. Don't assume any of those
-directories or files exist; check before referencing one.
+What actually exists:
+
+- `schema/canonical_rf.schema.json`, `taxonomy/rf_root_causes.yaml` (v0.2.0 —
+  see the predicate-grammar note under Conventions; `output_contract` now also
+  carries `optional_fields` / `abstention` shapes).
+- `adapters/base.py` + `adapters/normalize.py` — the Adapter ABC and its shared
+  validation/missing-fields/pseudonymisation logic.
+- `adapters/generic_csv.py` — `GenericCsvAdapter`: a `CsvMapping` (column →
+  scalar canonical path, coercion inferred from the schema) turns one flat CSV
+  row into one snapshot. Array fields out of scope by design.
+- `adapters/generic_json.py` — `GenericJsonAdapter`: a `JsonMapping` (dotted
+  source paths → canonical paths, plus per-element maps for the array fields)
+  turns a nested vendor JSON doc into one snapshot.
+- `adapters/_common.py` — schema-type introspection + value coercion shared by
+  both generic adapters. Example mappings: `adapters/generic_*.example.map.yaml`.
+- **No vendor-specific adapter yet** — not `cisco_c9800.py`.
+- `data/` — phase-4 synthetic generator, complete and runnable
+  (`predicates.py`, `snapshots.py`, `scenarios.py`, `prompts.py`,
+  `teacher.py`, `generate.py`). Teacher is a local Ollama model with an
+  offline templated fallback. Structure in every label is ground truth by
+  construction; the teacher only writes prose. `data/train.jsonl` /
+  `data/eval.jsonl` are **generated, git-ignored** — they do not exist until
+  you run the generator.
+- `training/` — phase-5 QLoRA scaffold (`qlora_config.yaml`, `train.py`,
+  `evaluate.py`). `train.py --dry-run` and `evaluate.py`'s scoring functions
+  run with no GPU / no heavy deps. An actual fine-tune run has **not** been
+  done (no GPU arranged) and `training/out/` does not exist.
+- `rag/` — phase-6 retrieval layer, complete and runnable. `documents.py`
+  (corpus parse + chunk), `embedder.py` (Ollama `nomic-embed-text`, offline
+  hash fallback), `ingest.py` (build `rag/index/`), `retriever.py` (query →
+  ranked `Citation`s with band/domain/topic filters; FAISS if installed, numpy
+  otherwise). `rag/corpus/` has 10 starter fact sheets, **all
+  `review_status: unverified`** pending a curator check against primary
+  sources; every citation is flagged `[UNVERIFIED]` until then. `rag/index/`
+  is generated + git-ignored.
+- `backend/` — phase-7 FastAPI app, complete and runnable. `models.py` is
+  **generated** from the schema (do-not-edit header carries the regen command);
+  `schemas.py` the API envelopes + RCA output type; `config.py` the per-stage
+  temperatures; `inference.py` the `ModelBackend` seam — `OllamaBackend`
+  (default), `AdapterBackend` (`RF_SLM_BACKEND=adapter` → base + phase-5 LoRA
+  at `RF_SLM_ADAPTER_DIR`, default `training/out`; heavy deps guarded, degrades
+  cleanly with a clear `/health` error if the adapter or `requirements-train.txt`
+  is missing), `StubBackend` for tests — plus diagnose/explain orchestration + RAG enrichment;
+  `rca.py` enforces `taxonomy.output_contract` on model output; `routers/`
+  has `/diagnose` `/explain` `/ingest` `/retrieve`, `main.py` adds `/health`.
+- `frontend/` — phase-8 React + Vite + Tailwind v4 SPA. Paste a canonical
+  snapshot → `/diagnose` → evidence chain + citations → `/explain`. The **only**
+  temperature control is the explanation slider, range fixed `[0.70, 0.90]`
+  (`components/ExplanationPanel.tsx`); the diagnosis path has none. Dev server
+  proxies the API to `:8000`. `npm run build` type-checks and bundles.
+  `node_modules/` and `dist/` are git-ignored by the scaffold's `.gitignore`.
 
 ## Commands
 
-- Install deps: `pip install -r requirements.txt` (currently just `jsonschema`).
-- Run tests: `python -m unittest discover -s tests`. No pytest — it isn't
-  installed and there's no dependency on it; stick to stdlib `unittest` for
-  anything added here unless that changes deliberately.
-- No build or lint step exists yet (no `train.py`, no backend/frontend to
-  build). Update this section as those phases land instead of leaving it stale.
+- Core deps: `pip install -r requirements.txt` (`jsonschema`, `rfc3339-validator`
+  for date-time enforcement, `PyYAML`, `numpy`, `faiss-cpu` for `rag/`).
+  Training-only deps (torch/transformers/peft/bitsandbytes/trl) are in
+  `requirements-train.txt`, installed separately on the GPU box.
+- Run tests: `python -m unittest discover -s tests`. Stdlib `unittest` only — no
+  pytest. The training tests import only pure helpers, never torch.
+- Generate the synthetic dataset (phase 4):
+  `python -m data.generate --count 3000 --out data/` (needs Ollama running with
+  `RF_SLM_TEACHER_MODEL` pulled), or `--no-teacher` for a fast offline set.
+- Validate the training config + data without a GPU: `python -m training.train --dry-run`.
+  On an 8 GB card use `--config training/qlora_config.8gb.yaml` (batch 1, seq
+  1536, LoRA r=8; ~6-7 GB peak). Turing cards (T4, RTX 20xx) also need
+  `bf16: false` + `bnb_4bit_compute_dtype: float16` — noted in that file.
+- Score a model against the eval targets:
+  `python -m training.evaluate --responder ollama --model <tag>` (baseline), or
+  `--responder adapter --model training/out` after a fine-tune.
+- Build the RAG index (phase 6): `python -m rag.ingest` (needs Ollama with
+  `nomic-embed-text` pulled; `--embedder hash` for an offline test index).
+  Query it: `python -m rag.retriever "6 GHz LPI EIRP limit" --band 6GHz`.
+- Run the backend (phase 7): `uvicorn backend.main:app --reload`.
+  `RF_SLM_BACKEND`: `ollama` (default), `adapter` (phase-5 LoRA), `stub` (no
+  model). Regenerate `backend/models.py` after a schema change with the command
+  in that file's header (`pip install -r requirements-dev.txt`).
+- No lint step. No frontend to build yet.
 
 The tree below is the **target** layout; items not listed as existing above
 are not built yet.
@@ -77,33 +137,56 @@ rf-slm/
 ├── adapters/
 │   ├── base.py                      # Adapter ABC -> canonical dict            [done]
 │   ├── normalize.py                 # validation + missing_fields + pseudonymisation [done]
-│   ├── generic_csv.py               # BUILD NEXT — universal fallback
-│   ├── generic_json.py
-│   ├── cisco_c9800.py               # validation source (pyATS available)
+│   ├── _common.py                   # schema introspection + coercion (shared) [done]
+│   ├── generic_csv.py               # flat CSV row, scalar fields              [done]
+│   ├── generic_json.py              # nested JSON incl. array fields           [done]
+│   ├── cisco_c9800.py               # BUILD NEXT — validation source (pyATS available)
 │   ├── aruba_central.py
 │   └── mist.py
 ├── data/
-│   ├── generate.py                  # teacher-driven synthetic generation
-│   ├── scenarios/                   # taxonomy x schema permutations
-│   ├── train.jsonl
-│   └── eval.jsonl
+│   ├── predicates.py                # required_evidence grammar evaluator      [done]
+│   ├── snapshots.py                 # baselines + path write + satisfy/violate [done]
+│   ├── scenarios.py                 # single / ambiguous / abstention builders [done]
+│   ├── prompts.py                   # diagnosis (low-temp) + explanation prompts [done]
+│   ├── teacher.py                   # Ollama client + offline fallback         [done]
+│   ├── generate.py                  # orchestrator + hard validation          [done]
+│   ├── train.jsonl                  # generated, git-ignored
+│   └── eval.jsonl                   # generated, git-ignored
 ├── training/
-│   ├── qlora_config.yaml
-│   ├── train.py
-│   └── evaluate.py                  # cause_id accuracy, evidence grounding
+│   ├── qlora_config.yaml            # Qwen2.5-1.5B, QLoRA 4-bit (16 GB / T4)   [done]
+│   ├── qlora_config.8gb.yaml        # low-VRAM preset for an 8 GB card         [done]
+│   ├── train.py                     # SFT loop; --dry-run needs no GPU         [done]
+│   └── evaluate.py                  # top-1/top-3, grounding, abstention, hallucination [done]
 ├── rag/
-│   ├── ingest.py
-│   ├── corpus/                      # standards + regulatory only
-│   └── retriever.py                 # FAISS
+│   ├── documents.py                 # corpus file format + chunking           [done]
+│   ├── embedder.py                  # Ollama nomic-embed-text + hash fallback  [done]
+│   ├── ingest.py                    # corpus -> rag/index/                     [done]
+│   ├── retriever.py                 # query -> ranked Citations (FAISS/numpy)  [done]
+│   ├── corpus/                      # 10 starter fact sheets, all unverified   [done]
+│   └── index/                       # generated, git-ignored
 ├── backend/
-│   ├── main.py                      # FastAPI
-│   ├── routers/{diagnose,explain,ingest,retrieve}.py
-│   ├── inference.py
-│   └── models.py                    # Pydantic mirrors of canonical schema
-├── frontend/                        # React + Vite + Tailwind
-│   └── src/
+│   ├── main.py                      # FastAPI app + /health                    [done]
+│   ├── config.py                    # per-stage temperatures, backend/index    [done]
+│   ├── models.py                    # GENERATED Pydantic mirror of the schema  [done]
+│   ├── schemas.py                   # API envelopes + RCAResult                 [done]
+│   ├── inference.py                 # ModelBackend seam + orchestration        [done]
+│   ├── rca.py                       # enforces taxonomy.output_contract        [done]
+│   ├── deps.py                      # DI providers (overridden in tests)       [done]
+│   └── routers/{diagnose,explain,ingest,retrieve}.py                           [done]
+├── frontend/                        # React + Vite + Tailwind v4            [done]
+│   ├── src/api.ts  src/types.ts  src/example.ts
+│   ├── src/App.tsx
+│   └── src/components/{SnapshotInput,DiagnosisView,EvidenceChain,
+│                        CitationList,ExplanationPanel,ConfidenceBadge,Section}.tsx
 └── tests/
-    └── test_adapters_base.py        # [done]
+    ├── test_adapters_base.py        # [done]
+    ├── test_generic_csv.py          # [done]
+    ├── test_generic_json.py         # [done]
+    ├── test_predicates.py           # [done]
+    ├── test_data_generation.py      # [done]
+    ├── test_training.py             # [done]
+    ├── test_rag.py                  # [done]
+    └── test_backend.py              # [done]
 ```
 
 ---
@@ -116,15 +199,42 @@ Do not skip ahead. Each phase gates the next.
    real WLC output. Adding fields later invalidates generated training data.
 2. **Taxonomy review.** `rf_root_causes.yaml` is the output vocabulary. Cause IDs
    are stable forever once data is generated against them.
-3. **Adapters.** `base.py` + `normalize.py` done. `generic_csv.py` next, then
-   `cisco_c9800.py` for validation against real captures.
-4. **Synthetic dataset.** Taxonomy × schema permutations via the teacher.
-   Target 3–5k examples, deliberately including ambiguous and multi-cause cases.
-5. **Fine-tune.** QLoRA on the student base.
-6. **RAG corpus.** Standards ingest, FAISS index.
-7. **FastAPI backend.**
-8. **React frontend.**
-9. **Validate** against real C9800 lab captures.
+3. **Adapters.** `base.py`, `normalize.py`, `generic_csv.py`, `generic_json.py`
+   done. Next: `cisco_c9800.py` for validation against real captures. (Not on
+   the critical path for phases 4–5: the synthetic generator builds canonical
+   snapshots directly from the schema + taxonomy, so it does not wait on a
+   vendor adapter. Adapters are still required before phase 9 lab validation.)
+4. **Synthetic dataset.** Generator built (`data/`). First real run done:
+   2990 examples (`qwen2.5:7b-instruct` teacher, seed 7), 0 rejections, 98 per
+   cause + 442 abstention, train 2367 / eval 623. Full audit clean — every
+   evidence path grounded, every asserted cause actually eligible, every
+   abstention has cause_id null + non-empty data_gaps. Prose is good with
+   occasional 7B fuzziness (acronym slips, weak edge-case reasoning); a
+   stronger teacher would improve a v2 regen. Files are git-ignored; regenerate
+   with the same command to reproduce.
+5. **Fine-tune.** QLoRA scaffold built (`training/`). Blocked on: a GPU, and a
+   phase-4 dataset from a real teacher. `--dry-run` is wired for CI.
+6. **RAG corpus.** Layer built (`rag/`): corpus format, chunking, Ollama
+   embeddings, ingest, retriever with band/domain/topic filters. 10 starter
+   fact sheets covering what the taxonomy references. Still to do: curator
+   verifies each fact sheet against its primary source and flips
+   `review_status` to `verified`; expand coverage; wire the retriever into the
+   diagnosis path so numeric regulatory claims carry a citation.
+7. **FastAPI backend.** Built (`backend/`): `/diagnose` (temperature pinned
+   low), `/explain` (0.7-0.9, clamped), `/ingest` (generic adapters), `/retrieve`
+   (corpus), `/health`. `ModelBackend` is pluggable — `OllamaBackend` serves
+   now, the QLoRA adapter slots in once phase 5 runs. `rca.py` enforces the
+   output contract on every response. An untuned 7B via `OllamaBackend` fails
+   that guard often (invents cause_ids) — the diagnosis prompt injects the
+   closed cause vocabulary to reduce it, but reliable `/diagnose` serving needs
+   phase 5 — set `RF_SLM_BACKEND=adapter` once `training/out/` exists. Still to
+   do: auth / rate limiting for anything exposed.
+8. **React frontend.** Built (`frontend/`): snapshot editor, diagnosis view
+   (evidence chain, ranked alternatives, remediation, data gaps, citations with
+   UNVERIFIED flags), explanation panel with the only temperature slider
+   (`[0.70, 0.90]`). Still to do: an ingest UI for CSV/JSON + mapping; polish.
+9. **Validate** against real C9800 lab captures. Needs `cisco_c9800.py`
+   (phase 3 remainder) and a lab capture set.
 
 ---
 

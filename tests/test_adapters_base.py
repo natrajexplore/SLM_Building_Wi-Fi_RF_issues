@@ -14,6 +14,7 @@ from adapters.normalize import (
     PseudonymisationError,
     SchemaValidationError,
     canonical_field_paths,
+    pseudonymise,
 )
 
 MINIMAL_SNAPSHOT = {
@@ -73,6 +74,38 @@ class LeakyMacAdapter(Adapter):
         snapshot["analysis_context"] = {"spectrum_capable": True}
         snapshot["neighbors"] = [
             {"bss_ref": "11:22:33:44:55:66", "vendor_hint": "AA:BB:CC:DD:EE:FF"}
+        ]
+        return snapshot
+
+
+class EmbeddedMacAdapter(Adapter):
+    """MAC buried inside an otherwise free-text field, not a whole-string value."""
+
+    name = "test_embedded"
+
+    def _translate(self, raw):
+        snapshot = {**MINIMAL_SNAPSHOT}
+        snapshot["analysis_context"] = {"spectrum_capable": True}
+        snapshot["events"] = [
+            {
+                "type": "channel_change",
+                "timestamp": "2026-01-01T00:00:01Z",
+                "detail": "Client AA:BB:CC:DD:EE:FF roamed from AP-3 to AP-5",
+            }
+        ]
+        return snapshot
+
+
+class CiscoFormatMacAdapter(Adapter):
+    """MAC in Cisco's three-group dotted form (aabb.ccdd.eeff)."""
+
+    name = "test_cisco_fmt"
+
+    def _translate(self, raw):
+        snapshot = {**MINIMAL_SNAPSHOT}
+        snapshot["analysis_context"] = {"spectrum_capable": True}
+        snapshot["neighbors"] = [
+            {"bss_ref": "11:22:33:44:55:66", "vendor_hint": "seen as aabb.ccdd.eeff"}
         ]
         return snapshot
 
@@ -150,6 +183,37 @@ class AdapterContractTests(unittest.TestCase):
     def test_mac_outside_known_identifier_fields_is_caught(self):
         with self.assertRaises(PseudonymisationError):
             LeakyMacAdapter().to_canonical(raw={})
+
+    def test_mac_embedded_in_free_text_is_caught(self):
+        # Regression: the scan regex used to be fully anchored, so a MAC with
+        # any surrounding text passed through undetected.
+        with self.assertRaises(PseudonymisationError):
+            EmbeddedMacAdapter().to_canonical(raw={})
+
+    def test_cisco_dotted_mac_format_is_caught(self):
+        # Regression: the scan regex only knew colon/hyphen separators, so
+        # IOS-XE's native aabb.ccdd.eeff form was never matched.
+        with self.assertRaises(PseudonymisationError):
+            CiscoFormatMacAdapter().to_canonical(raw={})
+
+    def test_pseudonym_is_stable_across_mac_textual_forms(self):
+        # Regression: pseudonymise() hashed the raw string, so the same
+        # physical MAC in different notations produced different pseudonyms
+        # and cross-snapshot correlation silently broke.
+        forms = [
+            "AA:BB:CC:DD:EE:FF",
+            "aa:bb:cc:dd:ee:ff",
+            "AA-BB-CC-DD-EE-FF",
+            "aabb.ccdd.eeff",
+        ]
+        pseudonyms = {pseudonymise(f, prefix="cli") for f in forms}
+        self.assertEqual(len(pseudonyms), 1)
+
+    def test_pseudonym_still_distinguishes_different_macs(self):
+        self.assertNotEqual(
+            pseudonymise("AA:BB:CC:DD:EE:FF", prefix="cli"),
+            pseudonymise("AA:BB:CC:DD:EE:00", prefix="cli"),
+        )
 
     def test_cannot_instantiate_adapter_without_translate(self):
         with self.assertRaises(TypeError):
