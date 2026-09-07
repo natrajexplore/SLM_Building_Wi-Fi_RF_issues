@@ -128,10 +128,30 @@ What actually exists:
   `query_store.py`'s `QueryStore` seam (mirrors the `ModelBackend` seam:
   `PostgresQueryStore` is real, a fake substitutes in tests via
   `app.dependency_overrides[deps.query_store_dep]`) as one `conversations`
-  row + two `messages` rows. `GET /ask/conversations` lists saved
-  conversations most-recent-first (`{id, title, created_at,
-  message_count}`, title = the first message truncated); `GET
-  /ask/conversations/{id}` returns a conversation's full message thread. A
+  row + two `messages` rows.
+
+  **Ask runs on its own model backend, deliberately separate from
+  `model_backend`.** `ReferenceBackend` (this dev box's usual
+  `RF_SLM_BACKEND=reference` for fast/deterministic `/diagnose`) only ever
+  emits diagnosis JSON — it has no concept of prose. Handing it to `/ask`
+  silently returned that same JSON as the "answer" to every question
+  (caught when a real question got back `{"cause_id": null, ...}`). Fixed
+  by giving `/ask` its own resolution: `ask_backend_dep` /
+  `inference.build_ask_backend`, config via `RF_SLM_ASK_BACKEND` /
+  `RF_SLM_ASK_MODEL` (default `ollama` + `qwen2.5:7b-instruct`);
+  `build_ask_backend` raises outright on `ask_backend="reference"` so this
+  class of bug can't recur silently. On this CPU-only dev machine that 7B
+  model is the accurate choice but slow (~20-80s/turn — RAG context adds
+  meaningfully to prompt-eval time); a small model
+  (`RF_SLM_ASK_MODEL=qwen2.5:0.5b`) answers in ~10s but is frequently
+  wrong on real questions — same accuracy-vs-latency ceiling documented
+  throughout the fine-tuning section below. Real GPU hardware removes
+  this tradeoff entirely.
+
+  `GET /ask/conversations` lists saved conversations most-recent-first
+  (`{id, title, created_at, message_count}`, title = the first message
+  truncated); `GET /ask/conversations/{id}` returns a conversation's full
+  message thread. A
   PostgreSQL outage degrades one `/ask` request (`stored: false`,
   `store_error` set) rather than failing it — this endpoint's job is the
   grounded answer, not the write. `POSTGRES_DSN` (default
