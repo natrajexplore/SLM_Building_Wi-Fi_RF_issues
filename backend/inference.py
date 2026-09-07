@@ -199,6 +199,26 @@ def build_backend(cfg: Settings) -> ModelBackend:
     raise BackendError(f"unknown model backend {cfg.model_backend!r}")
 
 
+def build_ask_backend(cfg: Settings) -> ModelBackend:
+    """Separate from build_backend: /ask needs free-text prose, and
+    ReferenceBackend (a deterministic rule engine, not a language model) can
+    only ever emit diagnosis JSON -- picking it here would silently return
+    that JSON as the "answer" to every question, which is exactly the bug
+    this split exists to prevent."""
+    if cfg.ask_backend == "stub":
+        return StubBackend()
+    if cfg.ask_backend == "ollama":
+        return OllamaBackend(cfg.ask_model, cfg.ollama_host, cfg.generate_timeout)
+    if cfg.ask_backend == "adapter":
+        return AdapterBackend(cfg)
+    if cfg.ask_backend == "reference":
+        raise BackendError(
+            "ask_backend='reference' is not valid -- ReferenceBackend only emits "
+            "diagnosis JSON, never prose. Use 'ollama', 'adapter', or 'stub'."
+        )
+    raise BackendError(f"unknown ask backend {cfg.ask_backend!r}")
+
+
 # --- retrieval enrichment ----------------------------------------------
 
 

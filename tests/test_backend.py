@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 
 from backend import live_buffer
 from backend.config import get_settings
-from backend.deps import backend_dep, query_store_dep, retriever_dep, settings_dep
+from backend.deps import ask_backend_dep, backend_dep, query_store_dep, retriever_dep, settings_dep
 from backend.inference import BackendError, ReferenceBackend, StubBackend, build_backend
 from backend.main import app
 from backend.query_store import QueryStoreError
@@ -111,6 +111,7 @@ class BackendTestCase(unittest.TestCase):
         self.stub = StubBackend()
         self.store = FakeQueryStore()
         app.dependency_overrides[backend_dep] = lambda: self.stub
+        app.dependency_overrides[ask_backend_dep] = lambda: self.stub  # same stub, separate seam
         app.dependency_overrides[retriever_dep] = lambda: None  # no RAG in tests
         app.dependency_overrides[query_store_dep] = lambda: self.store
         self.client = TestClient(app)
@@ -278,6 +279,29 @@ class BackendSelection(unittest.TestCase):
 
         with self.assertRaises(BackendError):
             build_backend(replace(get_settings(), model_backend="nope"))
+
+    def test_ask_backend_rejects_reference(self):
+        # ReferenceBackend only ever emits diagnosis JSON, never prose -- this
+        # is exactly the bug where the Ask tab returned raw {"cause_id": ...}
+        # instead of an answer. build_ask_backend must refuse it outright.
+        from dataclasses import replace
+
+        from backend.inference import build_ask_backend
+
+        with self.assertRaises(BackendError) as cm:
+            build_ask_backend(replace(get_settings(), ask_backend="reference"))
+        self.assertIn("not valid", str(cm.exception))
+
+    def test_ask_backend_is_independent_of_diagnose_backend(self):
+        # diagnose/explain can run the deterministic reference engine while
+        # /ask runs a real (here, stub) prose-capable backend at the same time.
+        from dataclasses import replace
+
+        from backend.inference import build_ask_backend
+
+        cfg = replace(get_settings(), model_backend="reference", ask_backend="stub")
+        self.assertIsInstance(build_backend(cfg), ReferenceBackend)
+        self.assertIsInstance(build_ask_backend(cfg), StubBackend)
 
     def test_reference_backend_produces_a_contract_valid_diagnosis(self):
         from dataclasses import replace

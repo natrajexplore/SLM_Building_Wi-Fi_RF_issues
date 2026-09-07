@@ -22,6 +22,13 @@ class Settings:
     explain_model: str = os.environ.get("RF_SLM_EXPLAIN_MODEL", "qwen2.5:7b-instruct")
     ollama_host: str = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
+    # /ask (Submit/Ask tab) backend -- deliberately separate from model_backend.
+    # ReferenceBackend is a deterministic rule engine that only ever emits
+    # diagnosis JSON; it cannot hold a free-text conversation, so "reference"
+    # is not a valid choice here even when it is the diagnose/explain backend.
+    ask_backend: str = os.environ.get("RF_SLM_ASK_BACKEND", "ollama")  # ollama | adapter | stub
+    ask_model: str = os.environ.get("RF_SLM_ASK_MODEL", "qwen2.5:7b-instruct")
+
     # adapter backend (RF_SLM_BACKEND=adapter): the phase-5 QLoRA output
     adapter_dir: Path = field(
         default_factory=lambda: Path(os.environ.get("RF_SLM_ADAPTER_DIR", str(REPO / "training" / "out")))

@@ -12,6 +12,13 @@ the user message and the assistant's reply via the QueryStore seam
 (backend/query_store.py). A storage outage degrades the response
 (`stored: false`) rather than failing the request — the point of the
 RAG-grounded answer is the endpoint's job, not the storage.
+
+Runs on its own model backend (`ask_backend_dep`, config via
+`RF_SLM_ASK_BACKEND`/`RF_SLM_ASK_MODEL`), separate from `/diagnose` and
+`/explain`'s `model_backend`: `ReferenceBackend` is a deterministic rule
+engine that only ever emits diagnosis JSON, so it is not a valid choice
+here even when it is the diagnose/explain backend — see
+`inference.build_ask_backend`.
 """
 from __future__ import annotations
 
@@ -20,7 +27,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.config import Settings
-from backend.deps import backend_dep, query_store_dep, retriever_dep, settings_dep
+from backend.deps import ask_backend_dep, query_store_dep, retriever_dep, settings_dep
 from backend.inference import BackendError, run_ask
 from backend.query_store import QueryStore, QueryStoreError
 from backend.schemas import (
@@ -48,7 +55,7 @@ def _title_from(message: str) -> str:
 def ask(
     req: AskRequest,
     cfg: Settings = Depends(settings_dep),
-    backend=Depends(backend_dep),
+    backend=Depends(ask_backend_dep),
     retriever=Depends(retriever_dep),
     store: QueryStore = Depends(query_store_dep),
 ) -> AskResponse:

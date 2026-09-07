@@ -4,7 +4,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from backend.config import Settings, get_settings
-from backend.inference import ModelBackend, build_backend
+from backend.inference import ModelBackend, build_ask_backend, build_backend
 from backend.query_store import PostgresQueryStore, QueryStore
 
 
@@ -19,6 +19,15 @@ def _backend_singleton() -> ModelBackend:
 
 def backend_dep() -> ModelBackend:
     return _backend_singleton()
+
+
+@lru_cache(maxsize=1)
+def _ask_backend_singleton() -> ModelBackend:
+    return build_ask_backend(get_settings())
+
+
+def ask_backend_dep() -> ModelBackend:
+    return _ask_backend_singleton()
 
 
 @lru_cache(maxsize=1)
