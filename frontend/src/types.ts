@@ -82,3 +82,17 @@ export interface AskResponse {
   stored: boolean
   store_error: string | null
 }
+
+export interface AskHistoryItem {
+  id: string
+  query: string
+  answer: string
+  citations: Citation[]
+  temperature_used: number
+  created_at: string
+}
+
+export interface AskHistoryResponse {
+  items: AskHistoryItem[]
+  store_error: string | null
+}

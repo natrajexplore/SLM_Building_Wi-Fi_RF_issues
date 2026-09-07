@@ -155,3 +155,19 @@ class AskResponse(BaseModel):
     created_at: str
     stored: bool
     store_error: str | None = None
+
+
+class AskHistoryItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    query: str
+    answer: str
+    citations: list[Citation]
+    temperature_used: float
+    created_at: str
+
+
+class AskHistoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[AskHistoryItem]
+    store_error: str | None = None

@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.config import Settings
 from backend.deps import backend_dep, mongo_store_dep, retriever_dep, settings_dep
 from backend.inference import BackendError, run_ask
 from backend.mongo import QueryStore, QueryStoreError
-from backend.schemas import AskRequest, AskResponse
+from backend.schemas import AskHistoryItem, AskHistoryResponse, AskRequest, AskResponse
 
 router = APIRouter()
 
@@ -54,3 +54,17 @@ def ask(
         temperature_used=temperature, created_at=created_at,
         stored=doc_id is not None, store_error=store_error,
     )
+
+
+@router.get("/ask/history", response_model=AskHistoryResponse)
+def ask_history(
+    limit: int = Query(default=50, ge=1, le=200),
+    store: QueryStore = Depends(mongo_store_dep),
+) -> AskHistoryResponse:
+    """Every previously saved Q&A, most recent first — not just this browser
+    session's own submissions (that's what the tab shows without calling this)."""
+    try:
+        docs = store.list_recent(limit)
+    except QueryStoreError as exc:
+        return AskHistoryResponse(items=[], store_error=str(exc))
+    return AskHistoryResponse(items=[AskHistoryItem.model_validate(d) for d in docs])

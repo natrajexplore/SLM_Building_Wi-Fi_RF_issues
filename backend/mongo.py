@@ -37,6 +37,11 @@ class QueryStore(Protocol):
         """True if the store is reachable right now, without writing anything."""
         ...
 
+    def list_recent(self, limit: int) -> list[dict]:
+        """Most-recent-first {id, query, answer, citations, temperature_used,
+        created_at} records. Raises QueryStoreError on failure."""
+        ...
+
 
 class MongoQueryStore:
     name = "mongo"
@@ -77,3 +82,20 @@ class MongoQueryStore:
             return True
         except QueryStoreError:
             return False
+
+    def list_recent(self, limit: int) -> list[dict]:
+        try:
+            cursor = self._collection().find().sort("created_at", -1).limit(limit)
+            docs = list(cursor)
+        except QueryStoreError:
+            raise
+        except Exception as exc:
+            raise QueryStoreError(f"MongoDB read failed: {exc}") from exc
+        return [
+            {
+                "id": str(d["_id"]), "query": d["query"], "answer": d["answer"],
+                "citations": d.get("citations", []),
+                "temperature_used": d["temperature_used"], "created_at": d["created_at"],
+            }
+            for d in docs
+        ]

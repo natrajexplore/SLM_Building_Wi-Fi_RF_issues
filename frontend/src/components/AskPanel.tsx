@@ -1,20 +1,40 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ApiError, api } from '../api'
 import type { AskResponse } from '../types'
 import { CitationList } from './CitationList'
 
 const MAX_HISTORY = 50
 
+function keyOf(a: AskResponse, i: number): string {
+  return a.id ?? `unsaved-${a.created_at}-${i}`
+}
+
 export function AskPanel() {
   const [query, setQuery] = useState('')
-  const [history, setHistory] = useState<AskResponse[]>([]) // this session only
+  const [history, setHistory] = useState<AskResponse[]>([]) // this session + loaded from MongoDB
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
 
-  function keyOf(a: AskResponse, i: number): string {
-    return a.id ?? `unsaved-${a.created_at}-${i}`
+  async function loadHistory() {
+    setHistoryLoading(true)
+    setHistoryError(null)
+    try {
+      const res = await api.askHistory(MAX_HISTORY)
+      setHistory(res.items.map((h) => ({ ...h, stored: true, store_error: null })))
+      if (res.store_error) setHistoryError(res.store_error)
+    } catch (e) {
+      setHistoryError(e instanceof ApiError ? e.message : String(e))
+    } finally {
+      setHistoryLoading(false)
+    }
   }
+
+  useEffect(() => {
+    loadHistory()
+  }, [])
 
   async function submit() {
     const q = query.trim()
@@ -73,11 +93,27 @@ export function AskPanel() {
           </div>
         )}
 
-        <h3 className="mb-2 mt-6 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          This session
-        </h3>
+        <div className="mb-2 mt-6 flex items-center justify-between">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Saved questions
+          </h3>
+          <button
+            onClick={loadHistory}
+            disabled={historyLoading}
+            className="text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50 dark:hover:text-slate-300"
+          >
+            {historyLoading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        </div>
+        {historyError && (
+          <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">
+            Couldn't load saved history: {historyError}
+          </p>
+        )}
         {history.length === 0 ? (
-          <p className="py-8 text-center text-sm text-slate-400">Nothing submitted yet.</p>
+          <p className="py-8 text-center text-sm text-slate-400">
+            {historyLoading ? 'Loading…' : 'Nothing submitted yet.'}
+          </p>
         ) : (
           <ul className="flex-1 space-y-1 overflow-y-auto">
             {history.map((a, i) => {

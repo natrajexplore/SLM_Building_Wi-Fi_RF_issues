@@ -65,13 +65,19 @@ class FakeQueryStore:
     def save(self, query, answer, citations, temperature_used, created_at) -> str:
         if self.fail:
             raise QueryStoreError("fake store unavailable")
-        doc = {"query": query, "answer": answer, "citations": citations,
+        doc_id = str(len(self.saved) + 1)
+        doc = {"id": doc_id, "query": query, "answer": answer, "citations": citations,
                "temperature_used": temperature_used, "created_at": created_at}
         self.saved.append(doc)
-        return str(len(self.saved))
+        return doc_id
 
     def ping(self) -> bool:
         return not self.fail
+
+    def list_recent(self, limit: int) -> list[dict]:
+        if self.fail:
+            raise QueryStoreError("fake store unavailable")
+        return list(reversed(self.saved))[:limit]
 
 
 class BackendTestCase(unittest.TestCase):
@@ -355,6 +361,39 @@ class Ask(BackendTestCase):
         r = self.client.post("/ask", json={"query": ""})
         self.assertEqual(r.status_code, 422)
         self.assertEqual(self.store.saved, [])
+
+    def test_ask_history_returns_most_recent_first(self):
+        self.stub._responses.extend(["first answer", "second answer"])
+        self.client.post("/ask", json={"query": "first question"})
+        self.client.post("/ask", json={"query": "second question"})
+
+        r = self.client.get("/ask/history")
+        self.assertEqual(r.status_code, 200, r.text)
+        items = r.json()["items"]
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0]["query"], "second question")  # most recent first
+        self.assertEqual(items[1]["query"], "first question")
+        self.assertIsNone(r.json()["store_error"])
+
+    def test_ask_history_respects_limit(self):
+        self.stub._responses.extend(["a", "b", "c"])
+        for q in ("q1", "q2", "q3"):
+            self.client.post("/ask", json={"query": q})
+        r = self.client.get("/ask/history", params={"limit": 2})
+        self.assertEqual(len(r.json()["items"]), 2)
+
+    def test_ask_history_degrades_gracefully_when_store_unavailable(self):
+        self.store.fail = True
+        r = self.client.get("/ask/history")
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertEqual(body["items"], [])
+        self.assertIn("unavailable", body["store_error"])
+
+    def test_ask_history_empty_when_nothing_saved(self):
+        r = self.client.get("/ask/history")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"items": [], "store_error": None})
 
 
 if __name__ == "__main__":

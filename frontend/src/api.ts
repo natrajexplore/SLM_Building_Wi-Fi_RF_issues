@@ -1,4 +1,5 @@
 import type {
+  AskHistoryResponse,
   AskResponse,
   ExplainResponse,
   HealthInfo,
@@ -50,4 +51,6 @@ export const api = {
   // No temperature param — the explanation band is the app's only temperature
   // control (CLAUDE.md hard decision #3); /ask always runs at its default.
   ask: (query: string) => post<AskResponse>('/ask', { query }),
+  askHistory: (limit = 50) =>
+    fetch(`/ask/history?limit=${limit}`).then((r) => handle<AskHistoryResponse>(r)),
 }
