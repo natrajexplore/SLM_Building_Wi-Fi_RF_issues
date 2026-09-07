@@ -6,10 +6,16 @@
     # offline, from saved Serial lines (no board, no pyserial needed):
     python hardware/read_probe.py --replay captures.jsonl --once
 
+    # feed the frontend's "2.4GHz Live Test" tab instead of printing here:
+    python hardware/read_probe.py --replay hardware/sample_capture.jsonl --live
+
 Each line the probe emits is one JSON object (see hardware/esp32_rf_probe/README.md).
-For each: POST /ingest {format:esp32} -> canonical snapshot -> POST /diagnose ->
-print the root cause, evidence chain and regulatory citations. Raw lines are
-appended to --save for later replay.
+By default, for each: POST /ingest {format:esp32} -> canonical snapshot -> POST
+/diagnose -> print the root cause, evidence chain and regulatory citations.
+With --live, each line instead goes to POST /live/ingest -- the same path the
+board's own WiFi BACKEND_URL would hit -- so it shows up in the frontend's live
+tab via GET /live/feed, and nothing is printed here per-line. Raw lines are
+appended to --save for later replay either way.
 """
 from __future__ import annotations
 
@@ -37,7 +43,7 @@ def _post(backend: str, path: str, obj: dict) -> dict:
                          "uvicorn backend.main:app --port 8000")
 
 
-def handle(line: str, backend: str, save) -> None:
+def handle(line: str, backend: str, save, live: bool) -> None:
     line = line.strip()
     if not line or not line.startswith("{"):
         return
@@ -52,6 +58,11 @@ def handle(line: str, backend: str, save) -> None:
     if save:
         save.write(line + "\n")
         save.flush()
+
+    if live:
+        sample = _post(backend, "/live/ingest", {"format": "esp32", "document": probe})
+        print(f"  live sample #{sample['id']} posted ({sample['received_at']})", file=sys.stderr)
+        return
 
     snap = _post(backend, "/ingest", {"format": "esp32", "document": probe})["snapshots"][0]
     m = snap["rf_metrics"]
@@ -77,14 +88,14 @@ def handle(line: str, backend: str, save) -> None:
         print(f"     cite: {c['title']} ({'; '.join(c['sources'])}){flag}")
 
 
-def run_replay(path: Path, backend: str, once: bool, save) -> None:
+def run_replay(path: Path, backend: str, once: bool, save, live: bool) -> None:
     for line in path.read_text(encoding="utf-8").splitlines():
-        handle(line, backend, save)
+        handle(line, backend, save, live)
         if once:
             return
 
 
-def run_serial(port: str, baud: int, backend: str, once: bool, save) -> None:
+def run_serial(port: str, baud: int, backend: str, once: bool, save, live: bool) -> None:
     try:
         import serial  # pyserial
     except ImportError:
@@ -99,7 +110,7 @@ def run_serial(port: str, baud: int, backend: str, once: bool, save) -> None:
             buf += chunk
             while "\n" in buf:
                 line, buf = buf.split("\n", 1)
-                handle(line, backend, save)
+                handle(line, backend, save, live)
                 if once:
                     return
 
@@ -113,14 +124,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--backend", default="http://localhost:8000")
     ap.add_argument("--once", action="store_true", help="one sample then exit")
     ap.add_argument("--save", type=Path, help="append raw probe lines here for later replay")
+    ap.add_argument("--live", action="store_true",
+                     help="POST /live/ingest instead of /ingest+/diagnose, "
+                          "so samples show up in the frontend's 2.4GHz Live Test tab")
     args = ap.parse_args(argv)
 
     save = open(args.save, "a", encoding="utf-8") if args.save else None
     try:
         if args.replay:
-            run_replay(args.replay, args.backend, args.once, save)
+            run_replay(args.replay, args.backend, args.once, save, args.live)
         else:
-            run_serial(args.port, args.baud, args.backend, args.once, save)
+            run_serial(args.port, args.baud, args.backend, args.once, save, args.live)
     except KeyboardInterrupt:
         pass
     finally:
