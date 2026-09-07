@@ -60,24 +60,50 @@ class FakeQueryStore:
 
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
-        self.saved: list[dict] = []
+        self.conversations: dict[str, dict] = {}  # id -> {title, created_at}
+        self.messages: dict[str, list[dict]] = {}  # conversation_id -> [message, ...]
+        self._next_conv_id = 1
+        self._next_msg_id = 1
 
-    def save(self, query, answer, citations, temperature_used, created_at) -> str:
+    def create_conversation(self, title, created_at) -> str:
         if self.fail:
             raise QueryStoreError("fake store unavailable")
-        doc_id = str(len(self.saved) + 1)
-        doc = {"id": doc_id, "query": query, "answer": answer, "citations": citations,
-               "temperature_used": temperature_used, "created_at": created_at}
-        self.saved.append(doc)
-        return doc_id
+        cid = str(self._next_conv_id)
+        self._next_conv_id += 1
+        self.conversations[cid] = {"title": title, "created_at": created_at}
+        self.messages[cid] = []
+        return cid
+
+    def add_message(self, conversation_id, role, content, citations, temperature_used, created_at) -> str:
+        if self.fail:
+            raise QueryStoreError("fake store unavailable")
+        if conversation_id not in self.conversations:
+            raise QueryStoreError(f"no such conversation {conversation_id!r}")
+        mid = str(self._next_msg_id)
+        self._next_msg_id += 1
+        self.messages[conversation_id].append({
+            "id": mid, "role": role, "content": content, "citations": citations,
+            "temperature_used": temperature_used, "created_at": created_at,
+        })
+        return mid
+
+    def get_messages(self, conversation_id) -> list[dict]:
+        if self.fail:
+            raise QueryStoreError("fake store unavailable")
+        return list(self.messages.get(conversation_id, []))
+
+    def list_conversations(self, limit: int) -> list[dict]:
+        if self.fail:
+            raise QueryStoreError("fake store unavailable")
+        items = [
+            {"id": cid, "title": c["title"], "created_at": c["created_at"],
+             "message_count": len(self.messages.get(cid, []))}
+            for cid, c in self.conversations.items()
+        ]
+        return list(reversed(items))[:limit]
 
     def ping(self) -> bool:
         return not self.fail
-
-    def list_recent(self, limit: int) -> list[dict]:
-        if self.fail:
-            raise QueryStoreError("fake store unavailable")
-        return list(reversed(self.saved))[:limit]
 
 
 class BackendTestCase(unittest.TestCase):
@@ -96,6 +122,17 @@ class BackendTestCase(unittest.TestCase):
 class HealthAndIngest(BackendTestCase):
     def test_health(self):
         self.assertEqual(self.client.get("/health").status_code, 200)
+
+    def test_taxonomy_includes_topic_browser_detail(self):
+        r = self.client.get("/taxonomy")
+        self.assertEqual(r.status_code, 200, r.text)
+        causes = r.json()["causes"]
+        self.assertTrue(causes)
+        rf24001 = next(c for c in causes if c["id"] == "RF-24-001")
+        self.assertTrue(rf24001["description"])
+        self.assertTrue(rf24001["discriminators"])
+        self.assertTrue(rf24001["remediation_intent"])
+        self.assertIsInstance(rf24001["confusable_with"], list)
 
     def test_ingest_csv(self):
         r = self.client.post("/ingest", json={
@@ -322,78 +359,116 @@ class Explain(BackendTestCase):
 
 
 class Ask(BackendTestCase):
-    def test_ask_answers_and_stores(self):
+    def test_ask_starts_a_new_conversation_and_stores_both_messages(self):
         self.stub._responses.append("Use the non-overlapping 1/6/11 channel plan.")
-        r = self.client.post("/ask", json={"query": "why avoid channel overlap on 2.4GHz?"})
+        r = self.client.post("/ask", json={"message": "why avoid channel overlap on 2.4GHz?"})
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         self.assertEqual(body["answer"], "Use the non-overlapping 1/6/11 channel plan.")
         self.assertTrue(body["stored"])
-        self.assertIsNotNone(body["id"])
+        self.assertIsNotNone(body["conversation_id"])
+        self.assertIsNotNone(body["message_id"])
         self.assertIsNone(body["store_error"])
-        self.assertEqual(len(self.store.saved), 1)
-        self.assertEqual(self.store.saved[0]["query"], "why avoid channel overlap on 2.4GHz?")
+
+        stored = self.store.messages[body["conversation_id"]]
+        self.assertEqual(len(stored), 2)
+        self.assertEqual(stored[0]["role"], "user")
+        self.assertEqual(stored[0]["content"], "why avoid channel overlap on 2.4GHz?")
+        self.assertEqual(stored[1]["role"], "assistant")
+        self.assertEqual(stored[1]["content"], body["answer"])
+
+    def test_ask_followup_includes_prior_turn_as_context(self):
+        self.stub._responses.extend(["First answer.", "Second answer."])
+        first = self.client.post("/ask", json={"message": "what is CCI?"}).json()
+        self.client.post(
+            "/ask",
+            json={"message": "and what about ACI?", "conversation_id": first["conversation_id"]},
+        )
+        second_call_prompt = self.stub.calls[1]["user"]
+        self.assertIn("what is CCI?", second_call_prompt)
+        self.assertIn("First answer.", second_call_prompt)
+        self.assertIn("and what about ACI?", second_call_prompt)
 
     def test_ask_runs_at_explanation_band_default_not_diagnosis_temperature(self):
         self.stub._responses.append("...")
-        r = self.client.post("/ask", json={"query": "what is CCI?"})
+        r = self.client.post("/ask", json={"message": "what is CCI?"})
         self.assertEqual(r.status_code, 200, r.text)
         self.assertEqual(r.json()["temperature_used"], 0.8)
         self.assertEqual(self.stub.calls[0]["temperature"], 0.8)
 
     def test_ask_temperature_clamped_to_explanation_band(self):
         self.stub._responses.append("...")
-        r = self.client.post("/ask", json={"query": "q", "temperature": 0.0})
+        r = self.client.post("/ask", json={"message": "q", "temperature": 0.0})
         self.assertEqual(r.json()["temperature_used"], 0.7)
 
     def test_ask_degrades_gracefully_when_store_unavailable(self):
         self.store.fail = True
         self.stub._responses.append("An answer that could not be saved.")
-        r = self.client.post("/ask", json={"query": "q"})
+        r = self.client.post("/ask", json={"message": "q"})
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         self.assertEqual(body["answer"], "An answer that could not be saved.")
         self.assertFalse(body["stored"])
-        self.assertIsNone(body["id"])
+        self.assertIsNone(body["message_id"])
         self.assertIn("unavailable", body["store_error"])
 
-    def test_ask_rejects_empty_query(self):
-        r = self.client.post("/ask", json={"query": ""})
+    def test_ask_rejects_empty_message(self):
+        r = self.client.post("/ask", json={"message": ""})
         self.assertEqual(r.status_code, 422)
-        self.assertEqual(self.store.saved, [])
+        self.assertEqual(self.store.conversations, {})
 
-    def test_ask_history_returns_most_recent_first(self):
-        self.stub._responses.extend(["first answer", "second answer"])
-        self.client.post("/ask", json={"query": "first question"})
-        self.client.post("/ask", json={"query": "second question"})
+    def test_ask_conversations_lists_most_recent_first(self):
+        self.stub._responses.extend(["a1", "b1"])
+        self.client.post("/ask", json={"message": "first conversation"})
+        self.client.post("/ask", json={"message": "second conversation"})
 
-        r = self.client.get("/ask/history")
+        r = self.client.get("/ask/conversations")
         self.assertEqual(r.status_code, 200, r.text)
         items = r.json()["items"]
         self.assertEqual(len(items), 2)
-        self.assertEqual(items[0]["query"], "second question")  # most recent first
-        self.assertEqual(items[1]["query"], "first question")
+        self.assertEqual(items[0]["title"], "second conversation")  # most recent first
+        self.assertEqual(items[1]["title"], "first conversation")
+        self.assertEqual(items[0]["message_count"], 2)  # user + assistant
         self.assertIsNone(r.json()["store_error"])
 
-    def test_ask_history_respects_limit(self):
+    def test_ask_conversations_respects_limit(self):
         self.stub._responses.extend(["a", "b", "c"])
         for q in ("q1", "q2", "q3"):
-            self.client.post("/ask", json={"query": q})
-        r = self.client.get("/ask/history", params={"limit": 2})
+            self.client.post("/ask", json={"message": q})
+        r = self.client.get("/ask/conversations", params={"limit": 2})
         self.assertEqual(len(r.json()["items"]), 2)
 
-    def test_ask_history_degrades_gracefully_when_store_unavailable(self):
+    def test_ask_conversations_degrades_gracefully_when_store_unavailable(self):
         self.store.fail = True
-        r = self.client.get("/ask/history")
+        r = self.client.get("/ask/conversations")
         self.assertEqual(r.status_code, 200, r.text)
         body = r.json()
         self.assertEqual(body["items"], [])
         self.assertIn("unavailable", body["store_error"])
 
-    def test_ask_history_empty_when_nothing_saved(self):
-        r = self.client.get("/ask/history")
+    def test_ask_conversations_empty_when_nothing_saved(self):
+        r = self.client.get("/ask/conversations")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {"items": [], "store_error": None})
+
+    def test_get_conversation_returns_full_thread(self):
+        self.stub._responses.extend(["First answer.", "Second answer."])
+        first = self.client.post("/ask", json={"message": "what is CCI?"}).json()
+        self.client.post(
+            "/ask",
+            json={"message": "and ACI?", "conversation_id": first["conversation_id"]},
+        )
+        r = self.client.get(f"/ask/conversations/{first['conversation_id']}")
+        self.assertEqual(r.status_code, 200, r.text)
+        messages = r.json()["messages"]
+        self.assertEqual([m["role"] for m in messages], ["user", "assistant", "user", "assistant"])
+        self.assertEqual(messages[0]["content"], "what is CCI?")
+        self.assertEqual(messages[-1]["content"], "Second answer.")
+
+    def test_get_conversation_degrades_with_503_when_store_unavailable(self):
+        self.store.fail = True
+        r = self.client.get("/ask/conversations/1")
+        self.assertEqual(r.status_code, 503)
 
 
 if __name__ == "__main__":

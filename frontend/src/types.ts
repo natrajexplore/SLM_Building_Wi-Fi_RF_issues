@@ -45,6 +45,10 @@ export interface TaxonomyCause {
   name: string
   bands: Band[]
   severity_default: string | null
+  description: string
+  discriminators: string
+  remediation_intent: string[]
+  confusable_with: string[]
 }
 
 export interface LiveSample {
@@ -73,8 +77,8 @@ export interface HealthInfo {
 }
 
 export interface AskResponse {
-  id: string | null
-  query: string
+  conversation_id: string | null
+  message_id: string | null
   answer: string
   citations: Citation[]
   temperature_used: number
@@ -83,16 +87,28 @@ export interface AskResponse {
   store_error: string | null
 }
 
-export interface AskHistoryItem {
+export interface ChatMessage {
   id: string
-  query: string
-  answer: string
+  role: 'user' | 'assistant'
+  content: string
   citations: Citation[]
-  temperature_used: number
+  temperature_used: number | null
   created_at: string
 }
 
-export interface AskHistoryResponse {
-  items: AskHistoryItem[]
+export interface ConversationSummary {
+  id: string
+  title: string
+  created_at: string
+  message_count: number
+}
+
+export interface ConversationListResponse {
+  items: ConversationSummary[]
   store_error: string | null
+}
+
+export interface ConversationDetailResponse {
+  id: string
+  messages: ChatMessage[]
 }

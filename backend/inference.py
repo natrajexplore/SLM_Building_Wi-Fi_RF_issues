@@ -333,16 +333,31 @@ def run_explanation(snapshot: dict, diagnosis: dict, temperature: float,
     return backend.generate(EXPLANATION_SYSTEM, user, temperature=temperature).strip()
 
 
-def run_ask(query: str, temperature: float, backend: ModelBackend, cfg: Settings,
+def run_ask(history: list[dict], temperature: float, backend: ModelBackend, cfg: Settings,
             retriever=None) -> tuple[str, list[Citation]]:
-    """Free-text question -> grounded answer, for the Submit/Ask tab.
+    """Multi-turn free-text chat -> grounded answer, for the Submit/Ask tab.
 
-    No canonical snapshot: the question stands alone, grounded only by
-    whatever the RAG index returns for it. Runs at the explanation-band
-    temperature (this is prose, not a structured assertion), never the
-    diagnosis temperature.
+    `history` is prior turns oldest-first, `{"role": "user"|"assistant",
+    "content": str}`, ending with the new user message being answered. No
+    canonical snapshot: retrieval is grounded only on the latest question,
+    not the whole transcript (a follow-up like "and for 6 GHz?" would
+    otherwise retrieve nothing useful on its own, but re-retrieving on every
+    prior turn too would dilute results with old topics). Runs at the
+    explanation-band temperature (this is prose, not a structured
+    assertion), never the diagnosis temperature.
     """
+    query = history[-1]["content"]
     citations = retrieve_for_text(query, cfg, retriever)
-    user = _context_block(citations) + f"\nQuestion:\n{query}\n"
+
+    user = _context_block(citations)
+    prior = history[:-1]
+    if prior:
+        transcript = "\n".join(
+            f"{'User' if turn['role'] == 'user' else 'Assistant'}: {turn['content']}"
+            for turn in prior
+        )
+        user += f"\nConversation so far:\n{transcript}\n"
+    user += f"\nNew question:\n{query}\n"
+
     answer = backend.generate(ASK_SYSTEM, user, temperature=temperature).strip()
     return answer, citations

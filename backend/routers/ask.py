@@ -1,13 +1,15 @@
-"""POST /ask — free-text RF question -> grounded answer, persisted for later review.
+"""POST /ask — free-text RF chat -> grounded answer, persisted as a conversation.
 
 Unlike /diagnose (a canonical snapshot -> structured cause) and /explain (an
-already-decided diagnosis -> prose), /ask takes an open question with no
-snapshot at all — "what's the LPI EIRP limit for 6 GHz indoor?", "why does
-2.4 GHz cell sizing differ from 5 GHz?". It retrieves regulatory context via
-the same RAG index, composes an answer at the explanation-band temperature
-(open-ended prose, not a low-temperature structured assertion — CLAUDE.md
-hard decision #3), and persists {query, answer, citations} via the QueryStore
-seam (backend/query_store.py). A storage outage degrades the response
+already-decided diagnosis -> prose), /ask takes an open, multi-turn
+conversation with no snapshot at all — "what's the LPI EIRP limit for 6 GHz
+indoor?", then a follow-up "and for outdoor?". Each message retrieves
+regulatory context via the same RAG index (grounded on the latest message
+only, not the whole thread), composes an answer at the explanation-band
+temperature (open-ended prose, not a low-temperature structured assertion —
+CLAUDE.md hard decision #3) with prior turns as context, and persists both
+the user message and the assistant's reply via the QueryStore seam
+(backend/query_store.py). A storage outage degrades the response
 (`stored: false`) rather than failing the request — the point of the
 RAG-grounded answer is the endpoint's job, not the storage.
 """
@@ -21,9 +23,25 @@ from backend.config import Settings
 from backend.deps import backend_dep, query_store_dep, retriever_dep, settings_dep
 from backend.inference import BackendError, run_ask
 from backend.query_store import QueryStore, QueryStoreError
-from backend.schemas import AskHistoryItem, AskHistoryResponse, AskRequest, AskResponse
+from backend.schemas import (
+    AskRequest,
+    AskResponse,
+    ChatMessage,
+    ConversationDetailResponse,
+    ConversationListResponse,
+    ConversationSummary,
+)
 
 router = APIRouter()
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _title_from(message: str) -> str:
+    message = " ".join(message.split())  # collapse whitespace/newlines
+    return message if len(message) <= 60 else message[:57] + "..."
 
 
 @router.post("/ask", response_model=AskResponse)
@@ -35,36 +53,73 @@ def ask(
     store: QueryStore = Depends(query_store_dep),
 ) -> AskResponse:
     temperature = cfg.clamp_explain_temperature(req.temperature)
+    now = _now()
+
+    conversation_id = req.conversation_id
+    store_error: str | None = None
+    prior: list[dict] = []
+
+    if conversation_id is None:
+        try:
+            conversation_id = store.create_conversation(_title_from(req.message), now)
+        except QueryStoreError as exc:
+            store_error = str(exc)
+    else:
+        try:
+            prior = store.get_messages(conversation_id)
+        except QueryStoreError as exc:
+            # Can't recover this conversation's context; still answer the new
+            # message on its own rather than failing the whole request.
+            store_error = str(exc)
+
+    history = [{"role": m["role"], "content": m["content"]} for m in prior]
+    history.append({"role": "user", "content": req.message})
+
     try:
-        answer, citations = run_ask(req.query, temperature, backend, cfg, retriever)
+        answer, citations = run_ask(history, temperature, backend, cfg, retriever)
     except BackendError as exc:
         raise HTTPException(503, str(exc))
 
-    created_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-    doc_id, store_error = None, None
-    try:
-        doc_id = store.save(
-            req.query, answer, [c.model_dump() for c in citations], temperature, created_at
-        )
-    except QueryStoreError as exc:
-        store_error = str(exc)
+    message_id = None
+    if conversation_id is not None and store_error is None:
+        try:
+            store.add_message(conversation_id, "user", req.message, [], None, now)
+            message_id = store.add_message(
+                conversation_id, "assistant", answer,
+                [c.model_dump() for c in citations], temperature, now,
+            )
+        except QueryStoreError as exc:
+            store_error = str(exc)
 
     return AskResponse(
-        id=doc_id, query=req.query, answer=answer, citations=citations,
-        temperature_used=temperature, created_at=created_at,
-        stored=doc_id is not None, store_error=store_error,
+        conversation_id=conversation_id, message_id=message_id,
+        answer=answer, citations=citations, temperature_used=temperature,
+        created_at=now, stored=message_id is not None, store_error=store_error,
     )
 
 
-@router.get("/ask/history", response_model=AskHistoryResponse)
-def ask_history(
+@router.get("/ask/conversations", response_model=ConversationListResponse)
+def list_conversations(
     limit: int = Query(default=50, ge=1, le=200),
     store: QueryStore = Depends(query_store_dep),
-) -> AskHistoryResponse:
-    """Every previously saved Q&A, most recent first — not just this browser
-    session's own submissions (that's what the tab shows without calling this)."""
+) -> ConversationListResponse:
+    """Every saved conversation, most recent first — not just this browser's own."""
     try:
-        docs = store.list_recent(limit)
+        rows = store.list_conversations(limit)
     except QueryStoreError as exc:
-        return AskHistoryResponse(items=[], store_error=str(exc))
-    return AskHistoryResponse(items=[AskHistoryItem.model_validate(d) for d in docs])
+        return ConversationListResponse(items=[], store_error=str(exc))
+    return ConversationListResponse(items=[ConversationSummary.model_validate(r) for r in rows])
+
+
+@router.get("/ask/conversations/{conversation_id}", response_model=ConversationDetailResponse)
+def get_conversation(
+    conversation_id: str,
+    store: QueryStore = Depends(query_store_dep),
+) -> ConversationDetailResponse:
+    try:
+        rows = store.get_messages(conversation_id)
+    except QueryStoreError as exc:
+        raise HTTPException(503, str(exc))
+    return ConversationDetailResponse(
+        id=conversation_id, messages=[ChatMessage.model_validate(r) for r in rows]
+    )

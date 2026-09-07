@@ -116,38 +116,62 @@ What actually exists:
   `run_diagnosis` at the same fixed diagnosis temperature as `/diagnose` (no
   caller-supplied temperature here either), and appends the result to the
   buffer; `GET /live/feed?since=<id>` is what the frontend polls.
-  `routers/ask.py`: `POST /ask` (Submit/Ask tab) takes a free-text question
-  with no snapshot, retrieves RAG context via `inference.run_ask` (new
-  helper alongside `run_diagnosis`/`run_explanation`), answers at the
+  `routers/ask.py`: the Submit/Ask tab is a **multi-turn chat**, not
+  isolated Q&A — `POST /ask` (`{message, conversation_id}`, the latter
+  omitted to start a new conversation) fetches the conversation's prior
+  messages, retrieves RAG context via `inference.run_ask` (new helper
+  alongside `run_diagnosis`/`run_explanation`; grounds retrieval on the
+  latest message only, includes prior turns as transcript context in the
+  prompt — see `data/prompts.py`'s `ASK_SYSTEM`), answers at the
   explanation-band temperature (never a second exposed knob — see below),
-  and persists `{query, answer, citations}` through `query_store.py`'s
-  `QueryStore` seam (mirrors the `ModelBackend` seam: `PostgresQueryStore`
-  is real, a fake substitutes in tests via
-  `app.dependency_overrides[deps.query_store_dep]`). A PostgreSQL outage
-  degrades one request (`stored: false`, `store_error` set) rather than
-  failing it — this endpoint's job is the grounded answer, not the write.
-  `POSTGRES_DSN` (default `postgresql://postgres@localhost:5432/rf_slm`) env
-  var configures it; the `queries` table is created on first successful
-  connection (no separate migration step); `psycopg` is lazily imported so
-  the rest of `backend/` stays importable with no PostgreSQL installed at
-  all. (Originally built against MongoDB — migrated to PostgreSQL; the
-  `QueryStore` protocol was already storage-agnostic so only
-  `backend/query_store.py` and its wiring changed.)
+  and persists both the user message and the reply through
+  `query_store.py`'s `QueryStore` seam (mirrors the `ModelBackend` seam:
+  `PostgresQueryStore` is real, a fake substitutes in tests via
+  `app.dependency_overrides[deps.query_store_dep]`) as one `conversations`
+  row + two `messages` rows. `GET /ask/conversations` lists saved
+  conversations most-recent-first (`{id, title, created_at,
+  message_count}`, title = the first message truncated); `GET
+  /ask/conversations/{id}` returns a conversation's full message thread. A
+  PostgreSQL outage degrades one `/ask` request (`stored: false`,
+  `store_error` set) rather than failing it — this endpoint's job is the
+  grounded answer, not the write. `POSTGRES_DSN` (default
+  `postgresql://postgres@localhost:5432/rf_slm`) env var configures it;
+  tables are created on first successful connection (no separate migration
+  step); `psycopg` is lazily imported so the rest of `backend/` stays
+  importable with no PostgreSQL installed at all. (Originally built
+  against MongoDB — migrated to PostgreSQL; the `QueryStore` protocol was
+  already storage-agnostic so only `backend/query_store.py` and its wiring
+  changed. Originally flat one-row-per-Q&A too — migrated to
+  conversations/messages for multi-turn chat; same reason, only the store
+  and router changed shape.)
+  `/taxonomy` (in `main.py`) now returns `description` / `discriminators`
+  / `remediation_intent` / `confusable_with` per cause too, not just
+  id/name/bands/severity — the frontend's Wireless Topics tab reads this,
+  not a new endpoint.
 - `frontend/` — phase-8 React + Vite + Tailwind v4 SPA. Three tabs (`App.tsx`
   `mode` state), in display order: **Submit / Ask** (default tab, first —
-  `components/AskPanel.tsx`) — a free-text question box; on mount it loads
-  every saved Q&A via `GET /ask/history` (most recent first, with a manual
-  Refresh button), and a fresh submission is prepended locally, each item
-  flagged if it wasn't actually persisted. **2.4GHz Live Test**
+  `components/AskPanel.tsx`) — a chat UI: a conversation list on the left
+  (`GET /ask/conversations`, with "+ New conversation" and a manual
+  Refresh button), message bubbles + input on the right. Sending appends
+  an optimistic user bubble, then `POST /ask` returns the assistant reply
+  (and the new `conversation_id` if this was a fresh conversation);
+  citations on an assistant message sit behind a native `<details>`
+  disclosure so the thread doesn't get overwhelmed. **2.4GHz Live Test**
   (`components/LiveTestPanel.tsx`) — polls `GET /live/feed` every 3s, lists
   incoming probe samples (channel, timestamp, cause_id/confidence), and
-  renders the selected one through the same `DiagnosisView` /
-  `ExplanationPanel` the Snapshot tab uses. "follow latest" auto-selects the
-  newest sample; clicking an older row pins the view and turns it off.
-  **Snapshot** (third) — paste a canonical snapshot → `/diagnose` →
-  evidence chain + citations → `/explain` (unchanged). The **only**
-  temperature control anywhere is the explanation slider, range fixed
-  `[0.70, 0.90]`
+  renders the selected one through `DiagnosisView` / `ExplanationPanel`.
+  "follow latest" auto-selects the newest sample; clicking an older row
+  pins the view and turns it off. **Wireless Topics** (third —
+  `components/WirelessTopicsPanel.tsx`) — a read-only browser over the
+  taxonomy from `/taxonomy`, grouped by band with a band filter; picking a
+  cause shows its description, discriminators, remediation intent, and
+  `confusable_with` links to jump between related causes. This replaced
+  the old "Snapshot" tab (paste raw canonical-snapshot JSON → `/diagnose`
+  → evidence chain → `/explain`) — that flow is gone from the UI by
+  request, but `/diagnose` itself is unchanged and still very much in use
+  (read_probe.py, `/live/ingest`, and `DiagnosisView`/`ExplanationPanel`
+  still render diagnoses from the Live Test tab). The **only** temperature
+  control anywhere is the explanation slider, range fixed `[0.70, 0.90]`
   (`components/ExplanationPanel.tsx`); the diagnosis path has none, and
   neither does `/ask` — it always runs at the explanation default
   server-side, with no second knob in the UI. Dev server proxies

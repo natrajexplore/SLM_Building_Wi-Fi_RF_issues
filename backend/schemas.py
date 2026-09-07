@@ -132,12 +132,14 @@ class RetrieveResponse(BaseModel):
     citations: list[Citation]
 
 
-# --- ask (Submit/Ask tab: free-text question -> RAG-grounded answer) ------
+# --- ask (Submit/Ask tab: multi-turn chat, RAG-grounded answers) ----------
 
 
 class AskRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    query: str = Field(min_length=1, max_length=2000)
+    message: str = Field(min_length=1, max_length=2000)
+    # Omit/null to start a new conversation; otherwise appends to an existing one.
+    conversation_id: str | None = None
     # Not user-facing — the UI has no temperature control here (CLAUDE.md hard
     # decision #3: the explanation band is the only exposed knob, and this
     # endpoint runs in that band, not a second one). Present for parity with
@@ -147,8 +149,8 @@ class AskRequest(BaseModel):
 
 class AskResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    id: str | None
-    query: str
+    conversation_id: str | None
+    message_id: str | None
     answer: str
     citations: list[Citation]
     temperature_used: float
@@ -157,17 +159,32 @@ class AskResponse(BaseModel):
     store_error: str | None = None
 
 
-class AskHistoryItem(BaseModel):
+class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
-    query: str
-    answer: str
-    citations: list[Citation]
-    temperature_used: float
+    role: Literal["user", "assistant"]
+    content: str
+    citations: list[Citation] = Field(default_factory=list)
+    temperature_used: float | None = None
     created_at: str
 
 
-class AskHistoryResponse(BaseModel):
+class ConversationSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    items: list[AskHistoryItem]
+    id: str
+    title: str
+    created_at: str
+    message_count: int
+
+
+class ConversationListResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[ConversationSummary]
+    store_error: str | None = None
+
+
+class ConversationDetailResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    messages: list[ChatMessage]
     store_error: str | None = None

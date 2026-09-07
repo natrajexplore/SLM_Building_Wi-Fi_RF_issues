@@ -10,9 +10,14 @@ Endpoints:
     POST /explain    snapshot + diagnosis -> prose     (temperature 0.7-0.9, clamped)
     POST /ingest     vendor rows/JSON -> canonical snapshot(s)
     POST /retrieve   query -> regulatory citations
-    POST /ask        free-text question -> grounded answer, persisted (Submit/Ask tab)
+    POST /ask        chat message (+ optional conversation_id) -> grounded reply,
+                     persisted as a conversation (Submit/Ask tab)
+    GET  /ask/conversations       list saved conversations, most recent first
+    GET  /ask/conversations/{id}  one conversation's full message thread
     POST /live/ingest  2.4 GHz hardware probe sample -> diagnosed + buffered
     GET  /live/feed    poll the live buffer (frontend's Live Test tab)
+    GET  /taxonomy   cause vocabulary + description/discriminators/remediation
+                     (frontend's Wireless Topics tab)
     GET  /health     backend + index + query-store status
 
 The two model paths run at deliberately different temperatures (CLAUDE.md hard
@@ -39,14 +44,20 @@ app.include_router(ask.router, tags=["ask"])
 
 @app.get("/taxonomy")
 def taxonomy() -> dict:
-    """The cause vocabulary — so a client can show names, not just IDs."""
+    """The cause vocabulary, with enough detail for the frontend's Wireless
+    Topics browser (description/discriminators/remediation intent), not just
+    id -> name lookup."""
     return {
         "causes": [
             {
                 "id": cid,
-                "name": get_cause(cid)["name"],
-                "bands": get_cause(cid)["bands"],
-                "severity_default": get_cause(cid).get("severity_default"),
+                "name": (c := get_cause(cid))["name"],
+                "bands": c["bands"],
+                "severity_default": c.get("severity_default"),
+                "description": c.get("description", "").strip(),
+                "discriminators": c.get("discriminators", "").strip(),
+                "remediation_intent": c.get("remediation_intent", []),
+                "confusable_with": c.get("confusable_with", []),
             }
             for cid in all_cause_ids()
         ]

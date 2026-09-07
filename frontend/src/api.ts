@@ -1,6 +1,7 @@
 import type {
-  AskHistoryResponse,
   AskResponse,
+  ConversationDetailResponse,
+  ConversationListResponse,
   ExplainResponse,
   HealthInfo,
   LiveFeedResponse,
@@ -42,8 +43,6 @@ async function handle<T>(res: Response): Promise<T> {
 export const api = {
   health: () => fetch('/health').then((r) => handle<HealthInfo>(r)),
   taxonomy: () => fetch('/taxonomy').then((r) => handle<{ causes: TaxonomyCause[] }>(r)),
-  diagnose: (snapshot: unknown, retrieve: boolean) =>
-    post<RCAResult>('/diagnose', { snapshot, retrieve }),
   explain: (snapshot: unknown, diagnosis: RCAResult, temperature: number | null) =>
     post<ExplainResponse>('/explain', { snapshot, diagnosis, temperature }),
   liveFeed: (sinceId: number) =>
@@ -52,11 +51,16 @@ export const api = {
     ),
   // No temperature param — the explanation band is the app's only temperature
   // control (CLAUDE.md hard decision #3); /ask always runs at its default.
-  ask: (query: string) => post<AskResponse>('/ask', { query }),
+  ask: (message: string, conversationId: string | null) =>
+    post<AskResponse>('/ask', { message, conversation_id: conversationId }),
   // no-store: the Refresh button re-requests this exact URL on demand, and a
   // browser-cached response would make "Refresh" silently do nothing.
-  askHistory: (limit = 50) =>
-    fetch(`/ask/history?limit=${limit}`, { cache: 'no-store' }).then((r) =>
-      handle<AskHistoryResponse>(r),
+  conversations: (limit = 50) =>
+    fetch(`/ask/conversations?limit=${limit}`, { cache: 'no-store' }).then((r) =>
+      handle<ConversationListResponse>(r),
+    ),
+  conversation: (id: string) =>
+    fetch(`/ask/conversations/${id}`, { cache: 'no-store' }).then((r) =>
+      handle<ConversationDetailResponse>(r),
     ),
 }
