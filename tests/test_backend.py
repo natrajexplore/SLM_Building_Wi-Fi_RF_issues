@@ -16,10 +16,10 @@ from fastapi.testclient import TestClient
 
 from backend import live_buffer
 from backend.config import get_settings
-from backend.deps import backend_dep, mongo_store_dep, retriever_dep, settings_dep
+from backend.deps import backend_dep, query_store_dep, retriever_dep, settings_dep
 from backend.inference import BackendError, ReferenceBackend, StubBackend, build_backend
 from backend.main import app
-from backend.mongo import QueryStoreError
+from backend.query_store import QueryStoreError
 from data import generate, scenarios
 
 CSV_MAPPING = {
@@ -56,7 +56,7 @@ def _valid_rca(cid: str, held_paths: list[str], snapshot: dict) -> dict:
 
 
 class FakeQueryStore:
-    """In-memory QueryStore fake — never touches real MongoDB in tests."""
+    """In-memory QueryStore fake — never touches real PostgreSQL in tests."""
 
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
@@ -86,7 +86,7 @@ class BackendTestCase(unittest.TestCase):
         self.store = FakeQueryStore()
         app.dependency_overrides[backend_dep] = lambda: self.stub
         app.dependency_overrides[retriever_dep] = lambda: None  # no RAG in tests
-        app.dependency_overrides[mongo_store_dep] = lambda: self.store
+        app.dependency_overrides[query_store_dep] = lambda: self.store
         self.client = TestClient(app)
 
     def tearDown(self):

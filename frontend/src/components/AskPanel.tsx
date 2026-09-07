@@ -11,7 +11,7 @@ function keyOf(a: AskResponse, i: number): string {
 
 export function AskPanel() {
   const [query, setQuery] = useState('')
-  const [history, setHistory] = useState<AskResponse[]>([]) // this session + loaded from MongoDB
+  const [history, setHistory] = useState<AskResponse[]>([]) // this session + loaded from the DB
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

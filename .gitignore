@@ -4,7 +4,7 @@ __pycache__/
 venv/
 *.egg-info/
 
-# Portable MongoDB (no local install/admin rights available) + its data dir.
+# Portable PostgreSQL (no local install/admin rights available) + its data dir.
 /.local/
 
 # Generated synthetic dataset (phase 4) — regenerate with `python -m data.generate`.

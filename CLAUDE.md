@@ -120,15 +120,19 @@ What actually exists:
   with no snapshot, retrieves RAG context via `inference.run_ask` (new
   helper alongside `run_diagnosis`/`run_explanation`), answers at the
   explanation-band temperature (never a second exposed knob — see below),
-  and persists `{query, answer, citations}` through `mongo.py`'s `QueryStore`
-  seam (mirrors the `ModelBackend` seam: `MongoQueryStore` is real,
-  `dataclasses`-free fakes substitute in tests via
-  `app.dependency_overrides[deps.mongo_store_dep]`). A MongoDB outage
+  and persists `{query, answer, citations}` through `query_store.py`'s
+  `QueryStore` seam (mirrors the `ModelBackend` seam: `PostgresQueryStore`
+  is real, a fake substitutes in tests via
+  `app.dependency_overrides[deps.query_store_dep]`). A PostgreSQL outage
   degrades one request (`stored: false`, `store_error` set) rather than
   failing it — this endpoint's job is the grounded answer, not the write.
-  `MONGO_URI` (default `mongodb://localhost:27017`) / `MONGO_DB` (default
-  `rf_slm`) env vars configure it; `pymongo` is lazily imported so the rest
-  of `backend/` stays importable with no MongoDB installed at all.
+  `POSTGRES_DSN` (default `postgresql://postgres@localhost:5432/rf_slm`) env
+  var configures it; the `queries` table is created on first successful
+  connection (no separate migration step); `psycopg` is lazily imported so
+  the rest of `backend/` stays importable with no PostgreSQL installed at
+  all. (Originally built against MongoDB — migrated to PostgreSQL; the
+  `QueryStore` protocol was already storage-agnostic so only
+  `backend/query_store.py` and its wiring changed.)
 - `frontend/` — phase-8 React + Vite + Tailwind v4 SPA. Three tabs (`App.tsx`
   `mode` state), in display order: **Submit / Ask** (default tab, first —
   `components/AskPanel.tsx`) — a free-text question box; on mount it loads
@@ -178,17 +182,26 @@ What actually exists:
   (deterministic, no model — good for exercising the frontend), `stub` (no
   model, tests only). Regenerate `backend/models.py` after a schema change
   with the command in that file's header (`pip install -r requirements-dev.txt`).
-  The Submit/Ask tab's `/ask` needs MongoDB reachable at `MONGO_URI`
-  (default `mongodb://localhost:27017`) to persist — the endpoint still
-  answers without it, just with `stored: false` on the response. No
-  MongoDB service is installed on this dev machine (the `winget` MSI
-  installer needs interactive UAC elevation); instead a portable copy
-  lives at `.local/mongodb/` (git-ignored — machine-local, not part of
-  the repo), started with:
-  `./.local/mongodb/bin/mongod.exe --dbpath ./.local/mongodb/data --logpath ./.local/mongodb/logs/mongod.log --port 27017 --bind_ip 127.0.0.1`
-  — no install, no admin rights, just a data dir. It does not run as a
-  service, so it needs to be started manually each session; `/health`'s
-  `query_store_connected` shows whether it's currently reachable.
+  The Submit/Ask tab's `/ask` needs PostgreSQL reachable at `POSTGRES_DSN`
+  (default `postgresql://postgres@localhost:5432/rf_slm`) to persist — the
+  endpoint still answers without it, just with `stored: false` on the
+  response. No PostgreSQL service is installed on this dev machine (the
+  `winget` installer needs interactive UAC elevation); instead a portable
+  copy lives at `.local/postgres/` (git-ignored — machine-local, not part
+  of the repo, ~330MB zip build from EDB, no installer). One-time setup
+  already done: `initdb -U postgres --auth=trust` (trust auth — local-only,
+  same open posture the prior MongoDB setup had) then `createdb rf_slm`.
+  Start it each session with:
+  `./.local/postgres/bin/pg_ctl.exe -D ./.local/postgres/data -l ./.local/postgres/logs.log -o "-c shared_buffers=32MB -c max_connections=20 -c listen_addresses=127.0.0.1 -p 5432" start`
+  — `pg_ctl start` daemonizes on its own (no need to background the shell
+  command), and the low `shared_buffers`/`max_connections` keep its
+  footprint small (this machine has been tight on RAM — MongoDB's default
+  ~50%-of-RAM WiredTiger cache was implicated in repeated OOM kills of the
+  whole dev stack, which is part of why this migrated to PostgreSQL).
+  Stop with `./.local/postgres/bin/pg_ctl.exe -D ./.local/postgres/data
+  stop`. It does not run as a Windows service, so it needs to be started
+  manually each session; `/health`'s `query_store_connected` shows whether
+  it's currently reachable.
 - Run the frontend (phase 8): `cd frontend && npm run dev` (proxies to the
   backend on `:8000`, see `vite.config.ts`); `npm run build` type-checks and
   bundles for production.
@@ -244,7 +257,7 @@ rf-slm/
 │   ├── inference.py                 # ModelBackend seam + orchestration        [done]
 │   ├── rca.py                       # enforces taxonomy.output_contract        [done]
 │   ├── deps.py                      # DI providers (overridden in tests)       [done]
-│   ├── mongo.py                     # QueryStore seam (Submit/Ask persistence) [done]
+│   ├── query_store.py               # QueryStore seam (Submit/Ask persistence) [done]
 │   ├── live_buffer.py               # in-memory ring buffer (live-test tab)    [done]
 │   └── routers/{diagnose,explain,ingest,retrieve,live,ask}.py                  [done]
 ├── frontend/                        # React + Vite + Tailwind v4            [done]

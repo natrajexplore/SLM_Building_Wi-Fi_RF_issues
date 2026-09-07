@@ -24,7 +24,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from backend.config import get_settings
-from backend.deps import backend_dep, mongo_store_dep, retriever_dep
+from backend.deps import backend_dep, query_store_dep, retriever_dep
 from backend.routers import ask, diagnose, explain, ingest, live, retrieve
 from data.taxonomy_loader import all_cause_ids, cause as get_cause
 
@@ -84,5 +84,5 @@ def health() -> dict:
             "embedder": retriever.manifest.get("embedder"),
             "review_status": retriever.manifest.get("review_status"),
         },
-        "query_store_connected": mongo_store_dep().ping(),
+        "query_store_connected": query_store_dep().ping(),
     }

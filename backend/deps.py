@@ -5,7 +5,7 @@ from functools import lru_cache
 
 from backend.config import Settings, get_settings
 from backend.inference import ModelBackend, build_backend
-from backend.mongo import MongoQueryStore, QueryStore
+from backend.query_store import PostgresQueryStore, QueryStore
 
 
 def settings_dep() -> Settings:
@@ -36,9 +36,9 @@ def retriever_dep():
 
 
 @lru_cache(maxsize=1)
-def _mongo_store_singleton() -> MongoQueryStore:
-    return MongoQueryStore()
+def _query_store_singleton() -> PostgresQueryStore:
+    return PostgresQueryStore()
 
 
-def mongo_store_dep() -> QueryStore:
-    return _mongo_store_singleton()
+def query_store_dep() -> QueryStore:
+    return _query_store_singleton()

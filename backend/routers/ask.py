@@ -7,7 +7,7 @@ snapshot at all — "what's the LPI EIRP limit for 6 GHz indoor?", "why does
 the same RAG index, composes an answer at the explanation-band temperature
 (open-ended prose, not a low-temperature structured assertion — CLAUDE.md
 hard decision #3), and persists {query, answer, citations} via the QueryStore
-seam (backend/mongo.py). A storage outage degrades the response
+seam (backend/query_store.py). A storage outage degrades the response
 (`stored: false`) rather than failing the request — the point of the
 RAG-grounded answer is the endpoint's job, not the storage.
 """
@@ -18,9 +18,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.config import Settings
-from backend.deps import backend_dep, mongo_store_dep, retriever_dep, settings_dep
+from backend.deps import backend_dep, query_store_dep, retriever_dep, settings_dep
 from backend.inference import BackendError, run_ask
-from backend.mongo import QueryStore, QueryStoreError
+from backend.query_store import QueryStore, QueryStoreError
 from backend.schemas import AskHistoryItem, AskHistoryResponse, AskRequest, AskResponse
 
 router = APIRouter()
@@ -32,7 +32,7 @@ def ask(
     cfg: Settings = Depends(settings_dep),
     backend=Depends(backend_dep),
     retriever=Depends(retriever_dep),
-    store: QueryStore = Depends(mongo_store_dep),
+    store: QueryStore = Depends(query_store_dep),
 ) -> AskResponse:
     temperature = cfg.clamp_explain_temperature(req.temperature)
     try:
@@ -59,7 +59,7 @@ def ask(
 @router.get("/ask/history", response_model=AskHistoryResponse)
 def ask_history(
     limit: int = Query(default=50, ge=1, le=200),
-    store: QueryStore = Depends(mongo_store_dep),
+    store: QueryStore = Depends(query_store_dep),
 ) -> AskHistoryResponse:
     """Every previously saved Q&A, most recent first — not just this browser
     session's own submissions (that's what the tab shows without calling this)."""
