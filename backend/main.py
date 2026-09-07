@@ -10,6 +10,8 @@ Endpoints:
     POST /explain    snapshot + diagnosis -> prose     (temperature 0.7-0.9, clamped)
     POST /ingest     vendor rows/JSON -> canonical snapshot(s)
     POST /retrieve   query -> regulatory citations
+    POST /live/ingest  2.4 GHz hardware probe sample -> diagnosed + buffered
+    GET  /live/feed    poll the live buffer (frontend's Live Test tab)
     GET  /health     backend + index status
 
 The two model paths run at deliberately different temperatures (CLAUDE.md hard
@@ -22,13 +24,14 @@ from fastapi import FastAPI
 
 from backend.config import get_settings
 from backend.deps import backend_dep, retriever_dep
-from backend.routers import diagnose, explain, ingest, retrieve
+from backend.routers import diagnose, explain, ingest, live, retrieve
 from data.taxonomy_loader import all_cause_ids, cause as get_cause
 
 app = FastAPI(title="RF Root-Cause SLM", version="0.1.0")
 app.include_router(diagnose.router, tags=["diagnose"])
 app.include_router(explain.router, tags=["explain"])
 app.include_router(ingest.router, tags=["ingest"])
+app.include_router(live.router, tags=["live"])
 app.include_router(retrieve.router, tags=["retrieve"])
 
 

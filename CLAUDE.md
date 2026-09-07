@@ -92,13 +92,31 @@ What actually exists:
   cleanly with a clear `/health` error if the adapter or `requirements-train.txt`
   is missing), `StubBackend` for tests — plus diagnose/explain orchestration + RAG enrichment;
   `rca.py` enforces `taxonomy.output_contract` on model output; `routers/`
-  has `/diagnose` `/explain` `/ingest` `/retrieve`, `main.py` adds `/health`.
-- `frontend/` — phase-8 React + Vite + Tailwind v4 SPA. Paste a canonical
-  snapshot → `/diagnose` → evidence chain + citations → `/explain`. The **only**
-  temperature control is the explanation slider, range fixed `[0.70, 0.90]`
-  (`components/ExplanationPanel.tsx`); the diagnosis path has none. Dev server
-  proxies the API to `:8000`. `npm run build` type-checks and bundles.
-  `node_modules/` and `dist/` are git-ignored by the scaffold's `.gitignore`.
+  has `/diagnose` `/explain` `/ingest` `/retrieve` `/live` (see below), `main.py`
+  adds `/health`. `live_buffer.py` is an in-memory, single-process ring buffer
+  (last 200 samples) feeding the 2.4 GHz hardware live-test tab — no
+  persistence, resets on restart, deliberately not a durability guarantee.
+  `routers/live.py`: `POST /live/ingest` accepts the same `{format:"esp32",
+  document:{...}}` envelope as `/ingest` (so `hardware/esp32_rf_probe`'s
+  existing `BACKEND_URL` POST needs no firmware change — just point it at
+  `/live/ingest` instead of `/ingest`), runs it through `Esp32Adapter` +
+  `run_diagnosis` at the same fixed diagnosis temperature as `/diagnose` (no
+  caller-supplied temperature here either), and appends the result to the
+  buffer; `GET /live/feed?since=<id>` is what the frontend polls.
+- `frontend/` — phase-8 React + Vite + Tailwind v4 SPA. Two tabs (`App.tsx`
+  `mode` state): **Snapshot** — paste a canonical snapshot → `/diagnose` →
+  evidence chain + citations → `/explain` (unchanged); **2.4GHz Live Test**
+  (`components/LiveTestPanel.tsx`) — polls `GET /live/feed` every 3s, lists
+  incoming probe samples (channel, timestamp, cause_id/confidence), and
+  renders the selected one through the same `DiagnosisView` /
+  `ExplanationPanel` the Snapshot tab uses. "follow latest" auto-selects the
+  newest sample; clicking an older row pins the view and turns it off. The
+  **only** temperature control anywhere is the explanation slider, range fixed
+  `[0.70, 0.90]` (`components/ExplanationPanel.tsx`); the diagnosis path has
+  none, including in the live tab. Dev server proxies `/diagnose` `/explain`
+  `/ingest` `/live` `/retrieve` `/taxonomy` `/health` to `:8000`
+  (`vite.config.ts`). `npm run build` type-checks and bundles. `node_modules/`
+  and `dist/` are git-ignored by the scaffold's `.gitignore`.
 
 ## Commands
 
@@ -230,9 +248,11 @@ Do not skip ahead. Each phase gates the next.
    diagnosis path so numeric regulatory claims carry a citation.
 7. **FastAPI backend.** Built (`backend/`): `/diagnose` (temperature pinned
    low), `/explain` (0.7-0.9, clamped), `/ingest` (generic adapters), `/retrieve`
-   (corpus), `/health`. `ModelBackend` is pluggable — `OllamaBackend` serves
-   now, the QLoRA adapter slots in once phase 5 runs. `rca.py` enforces the
-   output contract on every response. An untuned 7B via `OllamaBackend` fails
+   (corpus), `/live/ingest` + `/live/feed` (2.4 GHz hardware probe live feed,
+   in-memory buffer — see `live_buffer.py` above), `/health`. `ModelBackend` is
+   pluggable — `OllamaBackend` serves now, the QLoRA adapter slots in once
+   phase 5 runs. `rca.py` enforces the output contract on every response,
+   including live-feed diagnoses. An untuned 7B via `OllamaBackend` fails
    that guard often (invents cause_ids) — the diagnosis prompt injects the
    closed cause vocabulary to reduce it, but reliable `/diagnose` serving needs
    phase 5 — set `RF_SLM_BACKEND=adapter` once `training/out/` exists. Still to
@@ -240,7 +260,9 @@ Do not skip ahead. Each phase gates the next.
 8. **React frontend.** Built (`frontend/`): snapshot editor, diagnosis view
    (evidence chain, ranked alternatives, remediation, data gaps, citations with
    UNVERIFIED flags), explanation panel with the only temperature slider
-   (`[0.70, 0.90]`). Still to do: an ingest UI for CSV/JSON + mapping; polish.
+   (`[0.70, 0.90]`); a second tab, **2.4GHz Live Test**, polls the live buffer
+   and renders each hardware-probe sample through the same diagnosis/
+   explanation views. Still to do: an ingest UI for CSV/JSON + mapping; polish.
 9. **Validate** against real C9800 lab captures. Needs `cisco_c9800.py`
    (phase 3 remainder) and a lab capture set.
 

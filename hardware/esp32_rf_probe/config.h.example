@@ -17,6 +17,9 @@
 
 // If set, POST each sample as {"format":"esp32","document":{...}}.
 // Leave undefined for Serial-only output.
-// #define BACKEND_URL  "http://192.168.1.50:8000/ingest"
+// Point at /live/ingest to feed the frontend's "2.4GHz Live Test" tab
+// (each sample is diagnosed and held for polling); point at /ingest instead
+// for one-off ingestion that should NOT appear in the live tab.
+// #define BACKEND_URL  "http://192.168.1.50:8000/live/ingest"
 
 #define SAMPLE_PERIOD_MS  15000   // delay between samples in loop()

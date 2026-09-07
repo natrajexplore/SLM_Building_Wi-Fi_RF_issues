@@ -91,6 +91,13 @@ curl -X POST http://localhost:8000/ingest \
 # -> canonical snapshot; feed that to POST /diagnose
 ```
 
+**Live, in the frontend's "2.4GHz Live Test" tab:** set `BACKEND_URL` in
+`config.h` to `http://<backend-host>:8000/live/ingest` instead of `/ingest`.
+Every sample the board posts is normalized, diagnosed (same fixed low
+temperature as `/diagnose`), and held in an in-memory buffer the frontend
+polls via `GET /live/feed`. `/ingest` still exists unchanged for one-off
+ingestion (`read_probe.py`, CSV/JSON uploads) that should not show up live.
+
 **Offline (no board):** save Serial lines to a file and run them through
 `Esp32Adapter().to_canonical(json.loads(line))` — the adapter has no device
 dependency, so the whole path is testable from a recorded capture.

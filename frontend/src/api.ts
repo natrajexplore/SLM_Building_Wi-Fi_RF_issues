@@ -1,4 +1,10 @@
-import type { ExplainResponse, HealthInfo, RCAResult, TaxonomyCause } from './types'
+import type {
+  ExplainResponse,
+  HealthInfo,
+  LiveFeedResponse,
+  RCAResult,
+  TaxonomyCause,
+} from './types'
 
 export class ApiError extends Error {
   status: number
@@ -38,4 +44,6 @@ export const api = {
     post<RCAResult>('/diagnose', { snapshot, retrieve }),
   explain: (snapshot: unknown, diagnosis: RCAResult, temperature: number | null) =>
     post<ExplainResponse>('/explain', { snapshot, diagnosis, temperature }),
+  liveFeed: (sinceId: number) =>
+    fetch(`/live/feed?since=${sinceId}`).then((r) => handle<LiveFeedResponse>(r)),
 }

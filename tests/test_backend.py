@@ -14,9 +14,10 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from backend import live_buffer
 from backend.config import get_settings
-from backend.deps import backend_dep, retriever_dep
-from backend.inference import BackendError, StubBackend, build_backend
+from backend.deps import backend_dep, retriever_dep, settings_dep
+from backend.inference import BackendError, ReferenceBackend, StubBackend, build_backend
 from backend.main import app
 from data import generate, scenarios
 
@@ -147,6 +148,63 @@ class Diagnose(BackendTestCase):
         r = self.client.post("/diagnose", json={"snapshot": snap, "retrieve": False})
         self.assertEqual(r.status_code, 422)
         self.assertIn("citation", r.json()["detail"])
+
+
+class Live(BackendTestCase):
+    def setUp(self):
+        super().setUp()
+        live_buffer.clear()
+
+    def _esp32_doc(self) -> dict:
+        return {
+            "collected_at": "2026-03-01T12:00:00Z", "channel": 6, "channel_width_mhz": 20,
+            "sample_window_ms": 3000,
+            "scan": [
+                {"bssid": "aa:bb:cc:00:00:01", "ssid": "corp", "channel": 6, "rssi": -55},
+                {"bssid": "aa:bb:cc:00:00:02", "ssid": "corp", "channel": 6, "rssi": -67},
+                {"bssid": "aa:bb:cc:00:00:03", "ssid": "x", "channel": 6, "rssi": -71},
+            ],
+            "sniff": {"frames_total": 1000, "frames_retry": 120, "noise_floor_dbm_avg": -85.0,
+                      "airtime_us": 1_500_000, "unique_tx": 8},
+        }
+
+    def _use_reference_backend(self):
+        from dataclasses import replace
+
+        app.dependency_overrides[settings_dep] = lambda: replace(
+            get_settings(), model_backend="reference", rag_enabled=False
+        )
+        app.dependency_overrides[backend_dep] = lambda: ReferenceBackend()
+
+    def test_live_ingest_diagnoses_and_buffers_for_the_feed(self):
+        self._use_reference_backend()
+        r = self.client.post("/live/ingest", json={"format": "esp32", "document": self._esp32_doc()})
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertEqual(body["id"], 1)
+        self.assertEqual(body["snapshot"]["radio"]["band"], "2.4GHz")
+        self.assertIn("confidence", body["diagnosis"])
+
+        feed = self.client.get("/live/feed", params={"since": 0})
+        self.assertEqual(feed.status_code, 200, feed.text)
+        self.assertEqual(len(feed.json()["samples"]), 1)
+        self.assertEqual(feed.json()["latest_id"], 1)
+
+        # polling with the id already seen returns nothing new
+        self.assertEqual(self.client.get("/live/feed", params={"since": 1}).json()["samples"], [])
+
+    def test_live_ingest_rejects_non_esp32_format(self):
+        r = self.client.post("/live/ingest", json={"format": "csv"})
+        self.assertEqual(r.status_code, 422)
+
+    def test_live_ingest_requires_document(self):
+        r = self.client.post("/live/ingest", json={"format": "esp32"})
+        self.assertEqual(r.status_code, 422)
+
+    def test_live_feed_empty_before_any_sample(self):
+        r = self.client.get("/live/feed")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.json(), {"samples": [], "latest_id": 0})
 
 
 class BackendSelection(unittest.TestCase):

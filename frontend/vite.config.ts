@@ -11,6 +11,7 @@ export default defineConfig({
       '/diagnose': 'http://localhost:8000',
       '/explain': 'http://localhost:8000',
       '/ingest': 'http://localhost:8000',
+      '/live': 'http://localhost:8000',
       '/retrieve': 'http://localhost:8000',
       '/taxonomy': 'http://localhost:8000',
       '/health': 'http://localhost:8000',

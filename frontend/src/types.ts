@@ -47,6 +47,18 @@ export interface TaxonomyCause {
   severity_default: string | null
 }
 
+export interface LiveSample {
+  id: number
+  received_at: string
+  snapshot: unknown
+  diagnosis: RCAResult
+}
+
+export interface LiveFeedResponse {
+  samples: LiveSample[]
+  latest_id: number
+}
+
 export interface HealthInfo {
   status: string
   model_backend: string

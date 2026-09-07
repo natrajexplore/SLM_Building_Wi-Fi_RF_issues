@@ -96,6 +96,25 @@ class IngestResponse(BaseModel):
     snapshots: list[CanonicalSnapshot]
 
 
+# --- live feed (2.4 GHz hardware probe) ---------------------------------
+
+
+class LiveSample(BaseModel):
+    """One probe sample already diagnosed and held in the live buffer."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: int
+    received_at: str
+    snapshot: CanonicalSnapshot
+    diagnosis: RCAResult
+
+
+class LiveFeedResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    samples: list[LiveSample]
+    latest_id: int
+
+
 # --- retrieve ----------------------------------------------------------
 
 
