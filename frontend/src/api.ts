@@ -47,10 +47,16 @@ export const api = {
   explain: (snapshot: unknown, diagnosis: RCAResult, temperature: number | null) =>
     post<ExplainResponse>('/explain', { snapshot, diagnosis, temperature }),
   liveFeed: (sinceId: number) =>
-    fetch(`/live/feed?since=${sinceId}`).then((r) => handle<LiveFeedResponse>(r)),
+    fetch(`/live/feed?since=${sinceId}`, { cache: 'no-store' }).then((r) =>
+      handle<LiveFeedResponse>(r),
+    ),
   // No temperature param — the explanation band is the app's only temperature
   // control (CLAUDE.md hard decision #3); /ask always runs at its default.
   ask: (query: string) => post<AskResponse>('/ask', { query }),
+  // no-store: the Refresh button re-requests this exact URL on demand, and a
+  // browser-cached response would make "Refresh" silently do nothing.
   askHistory: (limit = 50) =>
-    fetch(`/ask/history?limit=${limit}`).then((r) => handle<AskHistoryResponse>(r)),
+    fetch(`/ask/history?limit=${limit}`, { cache: 'no-store' }).then((r) =>
+      handle<AskHistoryResponse>(r),
+    ),
 }
