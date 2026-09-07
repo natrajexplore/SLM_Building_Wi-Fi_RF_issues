@@ -179,7 +179,15 @@ What actually exists:
   with the command in that file's header (`pip install -r requirements-dev.txt`).
   The Submit/Ask tab's `/ask` needs MongoDB reachable at `MONGO_URI`
   (default `mongodb://localhost:27017`) to persist — the endpoint still
-  answers without it, just with `stored: false` on the response.
+  answers without it, just with `stored: false` on the response. No
+  MongoDB service is installed on this dev machine (the `winget` MSI
+  installer needs interactive UAC elevation); instead a portable copy
+  lives at `.local/mongodb/` (git-ignored — machine-local, not part of
+  the repo), started with:
+  `./.local/mongodb/bin/mongod.exe --dbpath ./.local/mongodb/data --logpath ./.local/mongodb/logs/mongod.log --port 27017 --bind_ip 127.0.0.1`
+  — no install, no admin rights, just a data dir. It does not run as a
+  service, so it needs to be started manually each session; `/health`'s
+  `query_store_connected` shows whether it's currently reachable.
 - Run the frontend (phase 8): `cd frontend && npm run dev` (proxies to the
   backend on `:8000`, see `vite.config.ts`); `npm run build` type-checks and
   bundles for production.

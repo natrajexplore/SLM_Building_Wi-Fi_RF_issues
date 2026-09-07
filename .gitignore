@@ -4,6 +4,9 @@ __pycache__/
 venv/
 *.egg-info/
 
+# Portable MongoDB (no local install/admin rights available) + its data dir.
+/.local/
+
 # Generated synthetic dataset (phase 4) — regenerate with `python -m data.generate`.
 # Not committed: it is large, teacher-model dependent, and reproducible from seed.
 /data/train.jsonl
