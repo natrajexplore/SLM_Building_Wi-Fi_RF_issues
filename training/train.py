@@ -134,7 +134,15 @@ def train(cfg: dict) -> int:
             [{"messages": r["messages"]} for r in read_chat_jsonl(REPO / path)]
         )
 
+    train_ds = to_ds(cfg["data"]["train_file"])
+    eval_ds = to_ds(cfg["data"]["eval_file"])
+
     t = cfg["training"]
+    # trl>=1.0's SFTConfig (via transformers>=5's TrainingArguments) dropped
+    # warmup_ratio entirely -- only warmup_steps remains. Convert here so the
+    # config file can keep expressing warmup as a ratio.
+    steps_per_epoch = -(-len(train_ds) // (t["per_device_train_batch_size"] * t["gradient_accumulation_steps"]))
+    warmup_steps = round(steps_per_epoch * t["num_train_epochs"] * t["warmup_ratio"])
     sft = SFTConfig(
         output_dir=t["output_dir"],
         num_train_epochs=t["num_train_epochs"],
@@ -143,7 +151,7 @@ def train(cfg: dict) -> int:
         gradient_accumulation_steps=t["gradient_accumulation_steps"],
         learning_rate=t["learning_rate"],
         lr_scheduler_type=t["lr_scheduler_type"],
-        warmup_ratio=t["warmup_ratio"],
+        warmup_steps=warmup_steps,
         weight_decay=t["weight_decay"],
         logging_steps=t["logging_steps"],
         eval_strategy=t["eval_strategy"],
@@ -156,7 +164,7 @@ def train(cfg: dict) -> int:
         gradient_checkpointing=t["gradient_checkpointing"],
         optim=t["optim"],
         seed=t["seed"],
-        max_seq_length=cfg["data"]["max_seq_length"],
+        max_length=cfg["data"]["max_seq_length"],  # trl>=1.0 renamed SFTConfig's max_seq_length -> max_length
         # trl masks everything up to the last assistant turn when given chat data
         assistant_only_loss=cfg["data"].get("mask_prompt", True),
         packing=False,
@@ -164,8 +172,8 @@ def train(cfg: dict) -> int:
     trainer = SFTTrainer(
         model=model,
         args=sft,
-        train_dataset=to_ds(cfg["data"]["train_file"]),
-        eval_dataset=to_ds(cfg["data"]["eval_file"]),
+        train_dataset=train_ds,
+        eval_dataset=eval_ds,
         peft_config=lora,
         processing_class=tokenizer,
     )

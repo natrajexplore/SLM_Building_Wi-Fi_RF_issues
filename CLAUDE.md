@@ -63,7 +63,16 @@ What actually exists:
   2.4 GHz only, `spectrum_capable` always false, BLE scan → `non_wifi_interferers`
   bluetooth hint, beacon IEs → regulatory_domain / min rate / CSA events. Firmware
   + JSON spec in `hardware/esp32_rf_probe/`. `POST /ingest {format:"esp32"}`.
-- **No WLC-vendor adapter yet** — not `cisco_c9800.py`.
+- `adapters/cisco_c9800.py` — `CiscoC9800Adapter`: Cisco Catalyst 9800 WLC
+  "capture bundle" (a documented normalized dict, not raw CLI/RESTCONF —
+  see the module docstring for why: exact Genie/YANG field names vary by
+  IOS-XE release and can't be hardcoded without a real capture to check
+  against) → snapshot. `spectrum_capable` is read per-radio from
+  `radio.clean_air_enabled`, not hardcoded like ESP32 — a C9800 AP may or
+  may not carry a CleanAir ASIC, independent of band; `non_wifi_interferers`
+  is refused outright if the bundle supplies spectrum entries for a radio
+  not flagged clean-air-capable. This is the phase-9 validation-source
+  adapter; still unvalidated against a real lab capture.
 - `data/` — phase-4 synthetic generator, complete and runnable
   (`predicates.py`, `snapshots.py`, `scenarios.py`, `prompts.py`,
   `teacher.py`, `generate.py`). Teacher is a local Ollama model with an
@@ -73,8 +82,12 @@ What actually exists:
   you run the generator.
 - `training/` — phase-5 QLoRA scaffold (`qlora_config.yaml`, `train.py`,
   `evaluate.py`). `train.py --dry-run` and `evaluate.py`'s scoring functions
-  run with no GPU / no heavy deps. An actual fine-tune run has **not** been
-  done (no GPU arranged) and `training/out/` does not exist.
+  run with no GPU / no heavy deps. Two `trl`/`transformers` API-drift bugs
+  in `train.py` were found and fixed via CPU testing (`max_seq_length` →
+  `max_length`, `warmup_ratio` → `warmup_steps`). The real (4-bit, GPU)
+  fine-tune has **not** been done — confirmed no CUDA GPU is reachable from
+  this dev environment or its remote agent — and `training/out/` does not
+  exist. See build-order step 5 for what CPU testing did and didn't prove.
 - `rag/` — phase-6 retrieval layer, complete and runnable. `documents.py`
   (corpus parse + chunk), `embedder.py` (Ollama `nomic-embed-text`, offline
   hash fallback), `ingest.py` (build `rag/index/`), `retriever.py` (query →
@@ -163,7 +176,7 @@ rf-slm/
 │   ├── generic_csv.py               # flat CSV row, scalar fields              [done]
 │   ├── generic_json.py              # nested JSON incl. array fields           [done]
 │   ├── esp32.py                     # ESP32 RF probe -> snapshot (2.4 GHz)     [done]
-│   ├── cisco_c9800.py               # BUILD NEXT — validation source (pyATS available)
+│   ├── cisco_c9800.py               # C9800 WLC capture bundle -> snapshot   [done]
 │   ├── aruba_central.py
 │   └── mist.py
 ├── data/
@@ -225,11 +238,15 @@ Do not skip ahead. Each phase gates the next.
    real WLC output. Adding fields later invalidates generated training data.
 2. **Taxonomy review.** `rf_root_causes.yaml` is the output vocabulary. Cause IDs
    are stable forever once data is generated against them.
-3. **Adapters.** `base.py`, `normalize.py`, `generic_csv.py`, `generic_json.py`
-   done. Next: `cisco_c9800.py` for validation against real captures. (Not on
-   the critical path for phases 4–5: the synthetic generator builds canonical
-   snapshots directly from the schema + taxonomy, so it does not wait on a
-   vendor adapter. Adapters are still required before phase 9 lab validation.)
+3. **Adapters.** `base.py`, `normalize.py`, `generic_csv.py`, `generic_json.py`,
+   `esp32.py`, `cisco_c9800.py` done. `cisco_c9800.py` consumes a documented
+   capture-bundle shape, not raw CLI/RESTCONF — it is unvalidated against a
+   real WLC until phase 9 supplies a lab capture and (if the bundle-building
+   glue reveals gaps) adjustments here. `aruba_central.py` / `mist.py` still
+   to build. (Not on the critical path for phases 4–5: the synthetic
+   generator builds canonical snapshots directly from the schema + taxonomy,
+   so it does not wait on a vendor adapter. Adapters are still required
+   before phase 9 lab validation.)
 4. **Synthetic dataset.** Generator built (`data/`). First real run done:
    2990 examples (`qwen2.5:7b-instruct` teacher, seed 7), 0 rejections, 98 per
    cause + 442 abstention, train 2367 / eval 623. Full audit clean — every
@@ -238,8 +255,21 @@ Do not skip ahead. Each phase gates the next.
    occasional 7B fuzziness (acronym slips, weak edge-case reasoning); a
    stronger teacher would improve a v2 regen. Files are git-ignored; regenerate
    with the same command to reproduce.
-5. **Fine-tune.** QLoRA scaffold built (`training/`). Blocked on: a GPU, and a
-   phase-4 dataset from a real teacher. `--dry-run` is wired for CI.
+5. **Fine-tune.** QLoRA scaffold built (`training/`), phase-4 dataset done
+   (2990 examples). `--dry-run` is wired for CI. Blocked on a CUDA GPU —
+   confirmed absent on both the dev machine (Intel integrated graphics only)
+   and this session's remote agent environment; no laptop GPU is available
+   either. Both configs (`qlora_config.yaml`, `qlora_config.8gb.yaml`) are
+   validated: `--dry-run` passes, and a real (non-quantized) LoRA training
+   loop was proven end-to-end on CPU against the real base model and real
+   data (loss 1.87→1.05 over 4 steps). Real 4-bit `BitsAndBytesConfig`
+   quantization loads on CPU but hangs during actual training — genuine
+   CUDA hardware is required for the real run, not just more patience.
+   Two dependency-drift bugs in `train.py` were found this way and fixed:
+   `SFTConfig`'s `max_seq_length`→`max_length` rename, and its
+   `warmup_ratio`→`warmup_steps`-only change in current `trl`/`transformers`.
+   Resume with `python -m training.train --config training/qlora_config.8gb.yaml`
+   (or the 16GB variant) the moment CUDA hardware is available.
 6. **RAG corpus.** Layer built (`rag/`): corpus format, chunking, Ollama
    embeddings, ingest, retriever with band/domain/topic filters. 10 starter
    fact sheets covering what the taxonomy references. Still to do: curator
@@ -263,8 +293,12 @@ Do not skip ahead. Each phase gates the next.
    (`[0.70, 0.90]`); a second tab, **2.4GHz Live Test**, polls the live buffer
    and renders each hardware-probe sample through the same diagnosis/
    explanation views. Still to do: an ingest UI for CSV/JSON + mapping; polish.
-9. **Validate** against real C9800 lab captures. Needs `cisco_c9800.py`
-   (phase 3 remainder) and a lab capture set.
+9. **Validate** against real C9800 lab captures. `cisco_c9800.py` is built
+   (phase 3 done) but unvalidated; still needs a lab capture set and a thin
+   pyATS/Genie-or-RESTCONF glue script that fills the capture-bundle shape
+   its module docstring documents — that step is also where any mismatch
+   between this adapter's assumed field names and the real WLC's actual
+   output gets caught and fixed.
 
 ---
 
