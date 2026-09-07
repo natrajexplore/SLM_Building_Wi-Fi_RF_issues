@@ -10,7 +10,7 @@ import type { HealthInfo, RCAResult, TaxonomyCause } from './types'
 type Mode = 'snapshot' | 'live' | 'ask'
 
 export default function App() {
-  const [mode, setMode] = useState<Mode>('snapshot')
+  const [mode, setMode] = useState<Mode>('ask')
   const [health, setHealth] = useState<HealthInfo | null>(null)
   const [causes, setCauses] = useState<TaxonomyCause[]>([])
   const [snapshot, setSnapshot] = useState<unknown>(null)
@@ -55,9 +55,9 @@ export default function App() {
         <div className="mx-auto flex max-w-6xl gap-1 py-2">
           {(
             [
-              ['snapshot', 'Snapshot'],
-              ['live', '2.4GHz Live Test'],
               ['ask', 'Submit / Ask'],
+              ['live', '2.4GHz Live Test'],
+              ['snapshot', 'Snapshot'],
             ] as const
           ).map(([m, label]) => (
             <button

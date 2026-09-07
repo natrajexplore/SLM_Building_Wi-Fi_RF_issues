@@ -130,19 +130,20 @@ What actually exists:
   `rf_slm`) env vars configure it; `pymongo` is lazily imported so the rest
   of `backend/` stays importable with no MongoDB installed at all.
 - `frontend/` — phase-8 React + Vite + Tailwind v4 SPA. Three tabs (`App.tsx`
-  `mode` state): **Snapshot** — paste a canonical snapshot → `/diagnose` →
-  evidence chain + citations → `/explain` (unchanged); **2.4GHz Live Test**
+  `mode` state), in display order: **Submit / Ask** (default tab, first —
+  `components/AskPanel.tsx`) — a free-text question box; on mount it loads
+  every saved Q&A via `GET /ask/history` (most recent first, with a manual
+  Refresh button), and a fresh submission is prepended locally, each item
+  flagged if it wasn't actually persisted. **2.4GHz Live Test**
   (`components/LiveTestPanel.tsx`) — polls `GET /live/feed` every 3s, lists
   incoming probe samples (channel, timestamp, cause_id/confidence), and
   renders the selected one through the same `DiagnosisView` /
   `ExplanationPanel` the Snapshot tab uses. "follow latest" auto-selects the
   newest sample; clicking an older row pins the view and turns it off.
-  **Submit / Ask** (`components/AskPanel.tsx`) — a free-text question box;
-  answers and their citations are kept in client-side session state (not
-  fetched back from MongoDB — the store is for later review, not an
-  in-app history view) and listed for re-selection, each flagged if it
-  wasn't actually persisted. The **only** temperature control anywhere is
-  the explanation slider, range fixed `[0.70, 0.90]`
+  **Snapshot** (third) — paste a canonical snapshot → `/diagnose` →
+  evidence chain + citations → `/explain` (unchanged). The **only**
+  temperature control anywhere is the explanation slider, range fixed
+  `[0.70, 0.90]`
   (`components/ExplanationPanel.tsx`); the diagnosis path has none, and
   neither does `/ask` — it always runs at the explanation default
   server-side, with no second knob in the UI. Dev server proxies
