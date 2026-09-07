@@ -15,7 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Protocol
 
-from data.prompts import DIAGNOSIS_SYSTEM, EXPLANATION_SYSTEM
+from data.prompts import ASK_SYSTEM, DIAGNOSIS_SYSTEM, EXPLANATION_SYSTEM
 from data.taxonomy_loader import all_cause_ids, cause as get_cause
 from training.evaluate import extract_json
 
@@ -217,25 +217,48 @@ def _retrieval_query(snapshot: dict) -> str:
     return "; ".join(str(b) for b in bits if b)
 
 
-def retrieve_context(snapshot: dict, cfg: Settings, retriever=None) -> list[Citation]:
-    if not cfg.rag_enabled:
-        return []
-    if retriever is None:
-        if Retriever is None:
-            return []
-        try:
-            retriever = Retriever.load(cfg.rag_index_dir)
-        except Exception:
-            return []
-    band = snapshot.get("radio", {}).get("band")
-    hits = retriever.retrieve(
-        _retrieval_query(snapshot), k=cfg.rag_top_k, bands=[band] if band else None
-    )
+def _resolve_retriever(cfg: Settings, retriever):
+    if retriever is not None:
+        return retriever
+    if not cfg.rag_enabled or Retriever is None:
+        return None
+    try:
+        return Retriever.load(cfg.rag_index_dir)
+    except Exception:
+        return None
+
+
+def _citations_from_hits(hits) -> list[Citation]:
     return [
         Citation(title=h.title, heading=h.heading, sources=list(h.sources),
                  review_status=h.review_status, score=h.score, text=h.text)
         for h in hits
     ]
+
+
+def retrieve_context(snapshot: dict, cfg: Settings, retriever=None) -> list[Citation]:
+    if not cfg.rag_enabled:
+        return []
+    retriever = _resolve_retriever(cfg, retriever)
+    if retriever is None:
+        return []
+    band = snapshot.get("radio", {}).get("band")
+    hits = retriever.retrieve(
+        _retrieval_query(snapshot), k=cfg.rag_top_k, bands=[band] if band else None
+    )
+    return _citations_from_hits(hits)
+
+
+def retrieve_for_text(query: str, cfg: Settings, retriever=None) -> list[Citation]:
+    """Same retrieval as retrieve_context, but for a free-text question with no
+    canonical snapshot to derive a query or band filter from (used by /ask)."""
+    if not cfg.rag_enabled:
+        return []
+    retriever = _resolve_retriever(cfg, retriever)
+    if retriever is None:
+        return []
+    hits = retriever.retrieve(query, k=cfg.rag_top_k)
+    return _citations_from_hits(hits)
 
 
 def _context_block(citations: list[Citation]) -> str:
@@ -308,3 +331,18 @@ def run_explanation(snapshot: dict, diagnosis: dict, temperature: float,
         "Explain this to a network engineer."
     )
     return backend.generate(EXPLANATION_SYSTEM, user, temperature=temperature).strip()
+
+
+def run_ask(query: str, temperature: float, backend: ModelBackend, cfg: Settings,
+            retriever=None) -> tuple[str, list[Citation]]:
+    """Free-text question -> grounded answer, for the Submit/Ask tab.
+
+    No canonical snapshot: the question stands alone, grounded only by
+    whatever the RAG index returns for it. Runs at the explanation-band
+    temperature (this is prose, not a structured assertion), never the
+    diagnosis temperature.
+    """
+    citations = retrieve_for_text(query, cfg, retriever)
+    user = _context_block(citations) + f"\nQuestion:\n{query}\n"
+    answer = backend.generate(ASK_SYSTEM, user, temperature=temperature).strip()
+    return answer, citations

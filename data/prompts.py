@@ -46,6 +46,21 @@ alternative framing. Do not introduce new numeric limits or contradict the
 structured diagnosis.
 """
 
+# Runs at the explanation-band temperature (0.7-0.9), not the diagnosis
+# temperature — this is open-ended prose, not a structured assertion (CLAUDE.md
+# hard decision #3). Unlike DIAGNOSIS_SYSTEM/EXPLANATION_SYSTEM, there is no
+# canonical snapshot here at all: the question stands alone, grounded only by
+# whatever the retrieval layer finds for it.
+ASK_SYSTEM = """\
+You answer a free-text question about enterprise Wi-Fi RF (2.4, 5 and 6 GHz)
+from a network engineer. You are given retrieved regulatory/technical context
+where available — cite it for any numeric limit (channel, power, timer). If
+the question needs telemetry you were not given (a specific site's snapshot),
+say so rather than guessing. Do not invent field paths, vendor CLI syntax, or
+numeric regulatory limits not present in the retrieved context. Keep the
+answer short, readable, and vendor-neutral.
+"""
+
 # --- teacher instruction templates -----------------------------------------
 
 TEACHER_WHY_SYSTEM = """\

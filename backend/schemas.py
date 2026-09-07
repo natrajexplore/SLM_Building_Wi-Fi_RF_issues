@@ -130,3 +130,28 @@ class RetrieveRequest(BaseModel):
 class RetrieveResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     citations: list[Citation]
+
+
+# --- ask (Submit/Ask tab: free-text question -> RAG-grounded answer) ------
+
+
+class AskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=1, max_length=2000)
+    # Not user-facing — the UI has no temperature control here (CLAUDE.md hard
+    # decision #3: the explanation band is the only exposed knob, and this
+    # endpoint runs in that band, not a second one). Present for parity with
+    # /explain's request shape and for testing the clamp.
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+
+
+class AskResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str | None
+    query: str
+    answer: str
+    citations: list[Citation]
+    temperature_used: float
+    created_at: str
+    stored: bool
+    store_error: str | None = None

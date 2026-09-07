@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ApiError, api } from './api'
+import { AskPanel } from './components/AskPanel'
 import { DiagnosisView } from './components/DiagnosisView'
 import { ExplanationPanel } from './components/ExplanationPanel'
 import { LiveTestPanel } from './components/LiveTestPanel'
 import { SnapshotInput } from './components/SnapshotInput'
 import type { HealthInfo, RCAResult, TaxonomyCause } from './types'
 
-type Mode = 'snapshot' | 'live'
+type Mode = 'snapshot' | 'live' | 'ask'
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('snapshot')
@@ -56,6 +57,7 @@ export default function App() {
             [
               ['snapshot', 'Snapshot'],
               ['live', '2.4GHz Live Test'],
+              ['ask', 'Submit / Ask'],
             ] as const
           ).map(([m, label]) => (
             <button
@@ -110,8 +112,10 @@ export default function App() {
               )}
             </div>
           </>
-        ) : (
+        ) : mode === 'live' ? (
           <LiveTestPanel causeName={causeName} />
+        ) : (
+          <AskPanel />
         )}
       </main>
     </div>
@@ -145,6 +149,10 @@ function HealthPill({ health }: { health: HealthInfo | null }) {
           </span>
         </>
       )}
+      <span>·</span>
+      <span className={health.query_store_connected ? '' : 'text-amber-600'}>
+        queries {health.query_store_connected ? 'saving' : 'not saving'}
+      </span>
     </div>
   )
 }

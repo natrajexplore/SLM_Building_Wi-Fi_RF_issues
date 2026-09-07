@@ -105,10 +105,10 @@ What actually exists:
   cleanly with a clear `/health` error if the adapter or `requirements-train.txt`
   is missing), `StubBackend` for tests — plus diagnose/explain orchestration + RAG enrichment;
   `rca.py` enforces `taxonomy.output_contract` on model output; `routers/`
-  has `/diagnose` `/explain` `/ingest` `/retrieve` `/live` (see below), `main.py`
-  adds `/health`. `live_buffer.py` is an in-memory, single-process ring buffer
-  (last 200 samples) feeding the 2.4 GHz hardware live-test tab — no
-  persistence, resets on restart, deliberately not a durability guarantee.
+  has `/diagnose` `/explain` `/ingest` `/retrieve` `/live` `/ask` (see below),
+  `main.py` adds `/health`. `live_buffer.py` is an in-memory, single-process
+  ring buffer (last 200 samples) feeding the 2.4 GHz hardware live-test tab —
+  no persistence, resets on restart, deliberately not a durability guarantee.
   `routers/live.py`: `POST /live/ingest` accepts the same `{format:"esp32",
   document:{...}}` envelope as `/ingest` (so `hardware/esp32_rf_probe`'s
   existing `BACKEND_URL` POST needs no firmware change — just point it at
@@ -116,20 +116,40 @@ What actually exists:
   `run_diagnosis` at the same fixed diagnosis temperature as `/diagnose` (no
   caller-supplied temperature here either), and appends the result to the
   buffer; `GET /live/feed?since=<id>` is what the frontend polls.
-- `frontend/` — phase-8 React + Vite + Tailwind v4 SPA. Two tabs (`App.tsx`
+  `routers/ask.py`: `POST /ask` (Submit/Ask tab) takes a free-text question
+  with no snapshot, retrieves RAG context via `inference.run_ask` (new
+  helper alongside `run_diagnosis`/`run_explanation`), answers at the
+  explanation-band temperature (never a second exposed knob — see below),
+  and persists `{query, answer, citations}` through `mongo.py`'s `QueryStore`
+  seam (mirrors the `ModelBackend` seam: `MongoQueryStore` is real,
+  `dataclasses`-free fakes substitute in tests via
+  `app.dependency_overrides[deps.mongo_store_dep]`). A MongoDB outage
+  degrades one request (`stored: false`, `store_error` set) rather than
+  failing it — this endpoint's job is the grounded answer, not the write.
+  `MONGO_URI` (default `mongodb://localhost:27017`) / `MONGO_DB` (default
+  `rf_slm`) env vars configure it; `pymongo` is lazily imported so the rest
+  of `backend/` stays importable with no MongoDB installed at all.
+- `frontend/` — phase-8 React + Vite + Tailwind v4 SPA. Three tabs (`App.tsx`
   `mode` state): **Snapshot** — paste a canonical snapshot → `/diagnose` →
   evidence chain + citations → `/explain` (unchanged); **2.4GHz Live Test**
   (`components/LiveTestPanel.tsx`) — polls `GET /live/feed` every 3s, lists
   incoming probe samples (channel, timestamp, cause_id/confidence), and
   renders the selected one through the same `DiagnosisView` /
   `ExplanationPanel` the Snapshot tab uses. "follow latest" auto-selects the
-  newest sample; clicking an older row pins the view and turns it off. The
-  **only** temperature control anywhere is the explanation slider, range fixed
-  `[0.70, 0.90]` (`components/ExplanationPanel.tsx`); the diagnosis path has
-  none, including in the live tab. Dev server proxies `/diagnose` `/explain`
-  `/ingest` `/live` `/retrieve` `/taxonomy` `/health` to `:8000`
-  (`vite.config.ts`). `npm run build` type-checks and bundles. `node_modules/`
-  and `dist/` are git-ignored by the scaffold's `.gitignore`.
+  newest sample; clicking an older row pins the view and turns it off.
+  **Submit / Ask** (`components/AskPanel.tsx`) — a free-text question box;
+  answers and their citations are kept in client-side session state (not
+  fetched back from MongoDB — the store is for later review, not an
+  in-app history view) and listed for re-selection, each flagged if it
+  wasn't actually persisted. The **only** temperature control anywhere is
+  the explanation slider, range fixed `[0.70, 0.90]`
+  (`components/ExplanationPanel.tsx`); the diagnosis path has none, and
+  neither does `/ask` — it always runs at the explanation default
+  server-side, with no second knob in the UI. Dev server proxies
+  `/diagnose` `/explain` `/ingest` `/live` `/retrieve` `/ask` `/taxonomy`
+  `/health` to `:8000` (`vite.config.ts`). `npm run build` type-checks and
+  bundles. `node_modules/` and `dist/` are git-ignored by the scaffold's
+  `.gitignore`.
 
 ## Commands
 
@@ -153,10 +173,17 @@ What actually exists:
   `nomic-embed-text` pulled; `--embedder hash` for an offline test index).
   Query it: `python -m rag.retriever "6 GHz LPI EIRP limit" --band 6GHz`.
 - Run the backend (phase 7): `uvicorn backend.main:app --reload`.
-  `RF_SLM_BACKEND`: `ollama` (default), `adapter` (phase-5 LoRA), `stub` (no
-  model). Regenerate `backend/models.py` after a schema change with the command
-  in that file's header (`pip install -r requirements-dev.txt`).
-- No lint step. No frontend to build yet.
+  `RF_SLM_BACKEND`: `ollama` (default), `adapter` (phase-5 LoRA), `reference`
+  (deterministic, no model — good for exercising the frontend), `stub` (no
+  model, tests only). Regenerate `backend/models.py` after a schema change
+  with the command in that file's header (`pip install -r requirements-dev.txt`).
+  The Submit/Ask tab's `/ask` needs MongoDB reachable at `MONGO_URI`
+  (default `mongodb://localhost:27017`) to persist — the endpoint still
+  answers without it, just with `stored: false` on the response.
+- Run the frontend (phase 8): `cd frontend && npm run dev` (proxies to the
+  backend on `:8000`, see `vite.config.ts`); `npm run build` type-checks and
+  bundles for production.
+- No lint step.
 
 The tree below is the **target** layout; items not listed as existing above
 are not built yet.
@@ -208,12 +235,15 @@ rf-slm/
 │   ├── inference.py                 # ModelBackend seam + orchestration        [done]
 │   ├── rca.py                       # enforces taxonomy.output_contract        [done]
 │   ├── deps.py                      # DI providers (overridden in tests)       [done]
-│   └── routers/{diagnose,explain,ingest,retrieve}.py                           [done]
+│   ├── mongo.py                     # QueryStore seam (Submit/Ask persistence) [done]
+│   ├── live_buffer.py               # in-memory ring buffer (live-test tab)    [done]
+│   └── routers/{diagnose,explain,ingest,retrieve,live,ask}.py                  [done]
 ├── frontend/                        # React + Vite + Tailwind v4            [done]
 │   ├── src/api.ts  src/types.ts  src/example.ts
 │   ├── src/App.tsx
-│   └── src/components/{SnapshotInput,DiagnosisView,EvidenceChain,
-│                        CitationList,ExplanationPanel,ConfidenceBadge,Section}.tsx
+│   └── src/components/{SnapshotInput,DiagnosisView,EvidenceChain,CitationList,
+│                        ExplanationPanel,ConfidenceBadge,Section,
+│                        LiveTestPanel,AskPanel}.tsx
 ├── hardware/
 │   └── esp32_rf_probe/              # Arduino firmware + JSON spec for esp32.py [done]
 └── tests/

@@ -69,4 +69,16 @@ export interface HealthInfo {
   explain_temperature_band: [number, number]
   rag_enabled: boolean
   rag_index: { chunks: number; embedder: string; review_status: Record<string, number> } | null
+  query_store_connected: boolean
+}
+
+export interface AskResponse {
+  id: string | null
+  query: string
+  answer: string
+  citations: Citation[]
+  temperature_used: number
+  created_at: string
+  stored: boolean
+  store_error: string | null
 }

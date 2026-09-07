@@ -16,9 +16,10 @@ from fastapi.testclient import TestClient
 
 from backend import live_buffer
 from backend.config import get_settings
-from backend.deps import backend_dep, retriever_dep, settings_dep
+from backend.deps import backend_dep, mongo_store_dep, retriever_dep, settings_dep
 from backend.inference import BackendError, ReferenceBackend, StubBackend, build_backend
 from backend.main import app
+from backend.mongo import QueryStoreError
 from data import generate, scenarios
 
 CSV_MAPPING = {
@@ -54,11 +55,32 @@ def _valid_rca(cid: str, held_paths: list[str], snapshot: dict) -> dict:
     }
 
 
+class FakeQueryStore:
+    """In-memory QueryStore fake — never touches real MongoDB in tests."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail = fail
+        self.saved: list[dict] = []
+
+    def save(self, query, answer, citations, temperature_used, created_at) -> str:
+        if self.fail:
+            raise QueryStoreError("fake store unavailable")
+        doc = {"query": query, "answer": answer, "citations": citations,
+               "temperature_used": temperature_used, "created_at": created_at}
+        self.saved.append(doc)
+        return str(len(self.saved))
+
+    def ping(self) -> bool:
+        return not self.fail
+
+
 class BackendTestCase(unittest.TestCase):
     def setUp(self):
         self.stub = StubBackend()
+        self.store = FakeQueryStore()
         app.dependency_overrides[backend_dep] = lambda: self.stub
         app.dependency_overrides[retriever_dep] = lambda: None  # no RAG in tests
+        app.dependency_overrides[mongo_store_dep] = lambda: self.store
         self.client = TestClient(app)
 
     def tearDown(self):
@@ -291,6 +313,48 @@ class Explain(BackendTestCase):
         self.stub._responses.append("...")
         r = self.client.post("/explain", json=self._payload())
         self.assertEqual(r.json()["temperature_used"], 0.8)
+
+
+class Ask(BackendTestCase):
+    def test_ask_answers_and_stores(self):
+        self.stub._responses.append("Use the non-overlapping 1/6/11 channel plan.")
+        r = self.client.post("/ask", json={"query": "why avoid channel overlap on 2.4GHz?"})
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertEqual(body["answer"], "Use the non-overlapping 1/6/11 channel plan.")
+        self.assertTrue(body["stored"])
+        self.assertIsNotNone(body["id"])
+        self.assertIsNone(body["store_error"])
+        self.assertEqual(len(self.store.saved), 1)
+        self.assertEqual(self.store.saved[0]["query"], "why avoid channel overlap on 2.4GHz?")
+
+    def test_ask_runs_at_explanation_band_default_not_diagnosis_temperature(self):
+        self.stub._responses.append("...")
+        r = self.client.post("/ask", json={"query": "what is CCI?"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["temperature_used"], 0.8)
+        self.assertEqual(self.stub.calls[0]["temperature"], 0.8)
+
+    def test_ask_temperature_clamped_to_explanation_band(self):
+        self.stub._responses.append("...")
+        r = self.client.post("/ask", json={"query": "q", "temperature": 0.0})
+        self.assertEqual(r.json()["temperature_used"], 0.7)
+
+    def test_ask_degrades_gracefully_when_store_unavailable(self):
+        self.store.fail = True
+        self.stub._responses.append("An answer that could not be saved.")
+        r = self.client.post("/ask", json={"query": "q"})
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertEqual(body["answer"], "An answer that could not be saved.")
+        self.assertFalse(body["stored"])
+        self.assertIsNone(body["id"])
+        self.assertIn("unavailable", body["store_error"])
+
+    def test_ask_rejects_empty_query(self):
+        r = self.client.post("/ask", json={"query": ""})
+        self.assertEqual(r.status_code, 422)
+        self.assertEqual(self.store.saved, [])
 
 
 if __name__ == "__main__":

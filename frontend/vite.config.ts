@@ -13,6 +13,7 @@ export default defineConfig({
       '/ingest': 'http://localhost:8000',
       '/live': 'http://localhost:8000',
       '/retrieve': 'http://localhost:8000',
+      '/ask': 'http://localhost:8000',
       '/taxonomy': 'http://localhost:8000',
       '/health': 'http://localhost:8000',
     },

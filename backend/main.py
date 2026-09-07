@@ -10,9 +10,10 @@ Endpoints:
     POST /explain    snapshot + diagnosis -> prose     (temperature 0.7-0.9, clamped)
     POST /ingest     vendor rows/JSON -> canonical snapshot(s)
     POST /retrieve   query -> regulatory citations
+    POST /ask        free-text question -> grounded answer, persisted (Submit/Ask tab)
     POST /live/ingest  2.4 GHz hardware probe sample -> diagnosed + buffered
     GET  /live/feed    poll the live buffer (frontend's Live Test tab)
-    GET  /health     backend + index status
+    GET  /health     backend + index + query-store status
 
 The two model paths run at deliberately different temperatures (CLAUDE.md hard
 decision #3); there is no global temperature setting and the diagnosis path
@@ -23,8 +24,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from backend.config import get_settings
-from backend.deps import backend_dep, retriever_dep
-from backend.routers import diagnose, explain, ingest, live, retrieve
+from backend.deps import backend_dep, mongo_store_dep, retriever_dep
+from backend.routers import ask, diagnose, explain, ingest, live, retrieve
 from data.taxonomy_loader import all_cause_ids, cause as get_cause
 
 app = FastAPI(title="RF Root-Cause SLM", version="0.1.0")
@@ -33,6 +34,7 @@ app.include_router(explain.router, tags=["explain"])
 app.include_router(ingest.router, tags=["ingest"])
 app.include_router(live.router, tags=["live"])
 app.include_router(retrieve.router, tags=["retrieve"])
+app.include_router(ask.router, tags=["ask"])
 
 
 @app.get("/taxonomy")
@@ -82,4 +84,5 @@ def health() -> dict:
             "embedder": retriever.manifest.get("embedder"),
             "review_status": retriever.manifest.get("review_status"),
         },
+        "query_store_connected": mongo_store_dep().ping(),
     }
