@@ -49,38 +49,51 @@ export function AskPanel() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, sending])
 
-  // Same reasoning as conversationsReqId: clicking between conversations
-  // while a previous (slow) thread fetch is still in flight must not let
-  // that older response overwrite the thread the user actually selected.
-  const threadReqId = useRef(0)
+  // Identifies the thread currently shown in the right-hand panel. send()
+  // and openConversation() both take 20-80s to resolve on this deployment,
+  // so a stale one finishing *after* the user has since clicked "New
+  // conversation" or opened a different thread must not be allowed to leak
+  // its answer into whatever is on screen now — every async continuation
+  // that would touch activeId/messages/sending checks this first.
+  const sessionRef = useRef(0)
 
   function startNewConversation() {
-    threadReqId.current++ // invalidate any in-flight openConversation load
+    sessionRef.current++
     setActiveId(null)
     setMessages([])
     setSendError(null)
+    setInput('')
+    setSending(false) // a still-running send from the old thread no longer blocks this one
   }
 
   async function openConversation(id: string) {
-    const reqId = ++threadReqId.current
+    const session = ++sessionRef.current
     setActiveId(id)
     setSendError(null)
+    setInput('')
+    setSending(false)
     setLoadingThread(true)
     try {
       const res = await api.conversation(id)
-      if (reqId !== threadReqId.current) return
+      if (session !== sessionRef.current) return // superseded before this resolved
       setMessages(res.messages)
     } catch (e) {
-      if (reqId !== threadReqId.current) return
+      if (session !== sessionRef.current) return
       setSendError(e instanceof ApiError ? e.message : String(e))
     } finally {
-      if (reqId === threadReqId.current) setLoadingThread(false)
+      if (session === sessionRef.current) setLoadingThread(false)
     }
+  }
+
+  function refreshAndReset() {
+    startNewConversation()
+    loadConversations()
   }
 
   async function send() {
     const text = input.trim()
     if (!text) return
+    const session = sessionRef.current // send() continues the current session, doesn't start one
     setSending(true)
     setSendError(null)
     // Optimistic bubble so the conversation feels responsive while the answer streams in.
@@ -96,32 +109,39 @@ export function AskPanel() {
     setInput('')
     try {
       const res = await api.ask(text, activeId)
-      setActiveId(res.conversation_id)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: res.message_id ?? `unsaved-${res.created_at}`,
-          role: 'assistant',
-          content: res.answer,
-          citations: res.citations,
-          temperature_used: res.temperature_used,
-          created_at: res.created_at,
-        },
-      ])
-      if (!res.stored) {
-        setSendError(
-          res.store_error
-            ? `Answered, but not saved: ${res.store_error}`
-            : 'Answered, but not saved.',
-        )
+      // The reply is safely saved server-side either way; if the user has
+      // since moved on to a new/different conversation, just don't show it
+      // here — loadConversations() below still surfaces it in the sidebar.
+      if (session === sessionRef.current) {
+        setActiveId(res.conversation_id)
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: res.message_id ?? `unsaved-${res.created_at}`,
+            role: 'assistant',
+            content: res.answer,
+            citations: res.citations,
+            temperature_used: res.temperature_used,
+            created_at: res.created_at,
+          },
+        ])
+        if (!res.stored) {
+          setSendError(
+            res.store_error
+              ? `Answered, but not saved: ${res.store_error}`
+              : 'Answered, but not saved.',
+          )
+        }
       }
       loadConversations() // refresh sidebar: new/updated title, message count
     } catch (e) {
-      setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id))
-      setInput(text) // give the message back so it isn't lost
-      setSendError(e instanceof ApiError ? `${e.status}: ${e.message}` : String(e))
+      if (session === sessionRef.current) {
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticUser.id))
+        setInput(text) // give the message back so it isn't lost
+        setSendError(e instanceof ApiError ? `${e.status}: ${e.message}` : String(e))
+      }
     } finally {
-      setSending(false)
+      if (session === sessionRef.current) setSending(false)
     }
   }
 
@@ -133,7 +153,7 @@ export function AskPanel() {
             Conversations
           </h2>
           <button
-            onClick={loadConversations}
+            onClick={refreshAndReset}
             disabled={conversationsLoading}
             className="text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50 dark:hover:text-slate-300"
           >
