@@ -79,6 +79,18 @@ def ask(
             # message on its own rather than failing the whole request.
             store_error = str(exc)
 
+    # Save the user's message *before* the model call, which can take
+    # 20-80s on this deployment's CPU-only backend. Saving it only after
+    # generation (as this used to) meant a conversation refreshed mid-reply
+    # showed 0 messages -- an empty-looking, newly-created conversation with
+    # nothing in it -- which read as the refresh being broken rather than
+    # the reply still being generated.
+    if conversation_id is not None and store_error is None:
+        try:
+            store.add_message(conversation_id, "user", req.message, [], None, now)
+        except QueryStoreError as exc:
+            store_error = str(exc)
+
     history = [{"role": m["role"], "content": m["content"]} for m in prior]
     history.append({"role": "user", "content": req.message})
 
@@ -90,7 +102,6 @@ def ask(
     message_id = None
     if conversation_id is not None and store_error is None:
         try:
-            store.add_message(conversation_id, "user", req.message, [], None, now)
             message_id = store.add_message(
                 conversation_id, "assistant", answer,
                 [c.model_dump() for c in citations], temperature, now,

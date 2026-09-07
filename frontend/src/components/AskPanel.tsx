@@ -17,18 +17,27 @@ export function AskPanel() {
   const [sendError, setSendError] = useState<string | null>(null)
 
   const bottomRef = useRef<HTMLDivElement>(null)
+  // Replies can take 20-80s here, so a manual Refresh click and the
+  // automatic post-send refresh can easily overlap; without this guard
+  // whichever network response happens to land last wins, even if it was
+  // the older of the two requests -- silently reverting the list to stale
+  // data right after a genuinely fresh one arrived.
+  const conversationsReqId = useRef(0)
 
   async function loadConversations() {
+    const reqId = ++conversationsReqId.current
     setConversationsLoading(true)
     setConversationsError(null)
     try {
       const res = await api.conversations()
+      if (reqId !== conversationsReqId.current) return // superseded by a newer request
       setConversations(res.items)
       if (res.store_error) setConversationsError(res.store_error)
     } catch (e) {
+      if (reqId !== conversationsReqId.current) return
       setConversationsError(e instanceof ApiError ? e.message : String(e))
     } finally {
-      setConversationsLoading(false)
+      if (reqId === conversationsReqId.current) setConversationsLoading(false)
     }
   }
 
@@ -40,23 +49,32 @@ export function AskPanel() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, sending])
 
+  // Same reasoning as conversationsReqId: clicking between conversations
+  // while a previous (slow) thread fetch is still in flight must not let
+  // that older response overwrite the thread the user actually selected.
+  const threadReqId = useRef(0)
+
   function startNewConversation() {
+    threadReqId.current++ // invalidate any in-flight openConversation load
     setActiveId(null)
     setMessages([])
     setSendError(null)
   }
 
   async function openConversation(id: string) {
+    const reqId = ++threadReqId.current
     setActiveId(id)
     setSendError(null)
     setLoadingThread(true)
     try {
       const res = await api.conversation(id)
+      if (reqId !== threadReqId.current) return
       setMessages(res.messages)
     } catch (e) {
+      if (reqId !== threadReqId.current) return
       setSendError(e instanceof ApiError ? e.message : String(e))
     } finally {
-      setLoadingThread(false)
+      if (reqId === threadReqId.current) setLoadingThread(false)
     }
   }
 

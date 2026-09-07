@@ -401,6 +401,30 @@ class Ask(BackendTestCase):
         self.assertEqual(stored[1]["role"], "assistant")
         self.assertEqual(stored[1]["content"], body["answer"])
 
+    def test_ask_saves_user_message_before_calling_the_slow_model(self):
+        # The model call can take 20-80s on the real ollama backend. If the
+        # user's message were only saved *after* generation (as it used to
+        # be), refreshing the conversation list mid-reply would show a
+        # newly-created conversation with zero messages -- looking broken,
+        # not "still thinking". A fake backend records how many messages
+        # exist in the store at the moment it's invoked, proving the user's
+        # message landed first.
+        store = self.store
+
+        class RecordingBackend:
+            def __init__(self):
+                self.seen_message_count = None
+
+            def generate(self, system, user, *, temperature):
+                self.seen_message_count = sum(len(v) for v in store.messages.values())
+                return "an answer"
+
+        recorder = RecordingBackend()
+        app.dependency_overrides[ask_backend_dep] = lambda: recorder
+        r = self.client.post("/ask", json={"message": "q"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(recorder.seen_message_count, 1)  # user message only, not yet the reply
+
     def test_ask_followup_includes_prior_turn_as_context(self):
         self.stub._responses.extend(["First answer.", "Second answer."])
         first = self.client.post("/ask", json={"message": "what is CCI?"}).json()
