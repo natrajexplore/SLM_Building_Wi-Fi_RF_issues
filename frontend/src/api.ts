@@ -64,4 +64,8 @@ export const api = {
     fetch(`/ask/conversations/${id}`, { cache: 'no-store' }).then((r) =>
       handle<ConversationDetailResponse>(r),
     ),
+  clearConversations: () =>
+    fetch('/ask/conversations', { method: 'DELETE' }).then((r) =>
+      handle<{ cleared: boolean }>(r),
+    ),
 }

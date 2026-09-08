@@ -189,3 +189,8 @@ class ConversationDetailResponse(BaseModel):
     id: str
     messages: list[ChatMessage]
     store_error: str | None = None
+
+
+class ClearConversationsResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    cleared: bool

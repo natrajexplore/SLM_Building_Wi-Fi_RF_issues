@@ -55,6 +55,11 @@ class QueryStore(Protocol):
         Raises QueryStoreError on failure."""
         ...
 
+    def clear_all(self) -> None:
+        """Delete every conversation and its messages. Irreversible.
+        Raises QueryStoreError on failure."""
+        ...
+
     def ping(self) -> bool:
         """True if the store is reachable right now, without writing anything."""
         ...
@@ -170,6 +175,17 @@ class PostgresQueryStore:
             {"id": str(r[0]), "title": r[1], "created_at": r[2], "message_count": r[3]}
             for r in rows
         ]
+
+    def clear_all(self) -> None:
+        try:
+            conn = self._connection()
+            # messages.conversation_id -> conversations(id) ON DELETE CASCADE,
+            # so deleting conversations takes their messages with them.
+            conn.execute("DELETE FROM conversations")
+        except QueryStoreError:
+            raise
+        except Exception as exc:
+            raise QueryStoreError(f"PostgreSQL write failed: {exc}") from exc
 
     def ping(self) -> bool:
         try:

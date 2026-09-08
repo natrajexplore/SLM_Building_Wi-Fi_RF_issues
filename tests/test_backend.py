@@ -102,6 +102,12 @@ class FakeQueryStore:
         ]
         return list(reversed(items))[:limit]
 
+    def clear_all(self) -> None:
+        if self.fail:
+            raise QueryStoreError("fake store unavailable")
+        self.conversations.clear()
+        self.messages.clear()
+
     def ping(self) -> bool:
         return not self.fail
 
@@ -532,6 +538,24 @@ class Ask(BackendTestCase):
         r = self.client.get("/ask/conversations")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {"items": [], "store_error": None})
+
+    def test_clear_conversations_deletes_everything(self):
+        self.stub._responses.extend(["a1", "b1"])
+        self.client.post("/ask", json={"message": "first conversation"})
+        self.client.post("/ask", json={"message": "second conversation"})
+
+        r = self.client.delete("/ask/conversations")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json(), {"cleared": True})
+
+        self.assertEqual(self.client.get("/ask/conversations").json()["items"], [])
+        self.assertEqual(self.store.conversations, {})
+        self.assertEqual(self.store.messages, {})
+
+    def test_clear_conversations_is_503_when_store_unavailable(self):
+        self.store.fail = True
+        r = self.client.delete("/ask/conversations")
+        self.assertEqual(r.status_code, 503)
 
     def test_get_conversation_returns_full_thread(self):
         self.stub._responses.extend(["First answer.", "Second answer."])

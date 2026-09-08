@@ -169,7 +169,11 @@ What actually exists:
   `GET /ask/conversations` lists saved conversations most-recent-first
   (`{id, title, created_at, message_count}`, title = the first message
   truncated); `GET /ask/conversations/{id}` returns a conversation's full
-  message thread. A
+  message thread. `DELETE /ask/conversations` (`QueryStore.clear_all`) wipes
+  every saved conversation and its messages — irreversible, so the frontend's
+  "Clear all" button confirms with the user first; a store outage here is a
+  503, not a silent no-op, since a caller must never be told something was
+  cleared when it wasn't. A
   PostgreSQL outage degrades one `/ask` request (`stored: false`,
   `store_error` set) rather than failing it — this endpoint's job is the
   grounded answer, not the write. `POSTGRES_DSN` (default
@@ -189,8 +193,10 @@ What actually exists:
 - `frontend/` — phase-8 React + Vite + Tailwind v4 SPA. Three tabs (`App.tsx`
   `mode` state), in display order: **Submit / Ask** (default tab, first —
   `components/AskPanel.tsx`) — a chat UI: a conversation list on the left
-  (`GET /ask/conversations`, with "+ New conversation" and a manual
-  Refresh button), message bubbles + input on the right. Sending appends
+  (`GET /ask/conversations`, with "+ New conversation", a manual Refresh
+  button, and a "Clear all" button — `window.confirm` gate, then
+  `DELETE /ask/conversations` — that resets the open thread and empties the
+  sidebar), message bubbles + input on the right. Sending appends
   an optimistic user bubble, then `POST /ask` returns the assistant reply
   (and the new `conversation_id` if this was a fresh conversation);
   citations on an assistant message sit behind a native `<details>`

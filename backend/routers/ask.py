@@ -34,6 +34,7 @@ from backend.schemas import (
     AskRequest,
     AskResponse,
     ChatMessage,
+    ClearConversationsResponse,
     ConversationDetailResponse,
     ConversationListResponse,
     ConversationSummary,
@@ -127,6 +128,17 @@ def list_conversations(
     except QueryStoreError as exc:
         return ConversationListResponse(items=[], store_error=str(exc))
     return ConversationListResponse(items=[ConversationSummary.model_validate(r) for r in rows])
+
+
+@router.delete("/ask/conversations", response_model=ClearConversationsResponse)
+def clear_conversations(store: QueryStore = Depends(query_store_dep)) -> ClearConversationsResponse:
+    """Delete every saved conversation and its messages. Irreversible — the
+    frontend confirms with the user before calling this."""
+    try:
+        store.clear_all()
+    except QueryStoreError as exc:
+        raise HTTPException(503, str(exc))
+    return ClearConversationsResponse(cleared=True)
 
 
 @router.get("/ask/conversations/{conversation_id}", response_model=ConversationDetailResponse)

@@ -7,6 +7,7 @@ export function AskPanel() {
   const [conversations, setConversations] = useState<ConversationSummary[]>([])
   const [conversationsLoading, setConversationsLoading] = useState(false)
   const [conversationsError, setConversationsError] = useState<string | null>(null)
+  const [clearing, setClearing] = useState(false)
 
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -90,6 +91,27 @@ export function AskPanel() {
     loadConversations()
   }
 
+  async function clearAllConversations() {
+    if (conversations.length === 0) return
+    const ok = window.confirm(
+      `Delete all ${conversations.length} saved conversation${
+        conversations.length === 1 ? '' : 's'
+      }? This cannot be undone.`,
+    )
+    if (!ok) return
+    setClearing(true)
+    setConversationsError(null)
+    try {
+      await api.clearConversations()
+      startNewConversation()
+      setConversations([])
+    } catch (e) {
+      setConversationsError(e instanceof ApiError ? e.message : String(e))
+    } finally {
+      setClearing(false)
+    }
+  }
+
   async function send() {
     const text = input.trim()
     if (!text) return
@@ -152,13 +174,22 @@ export function AskPanel() {
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
             Conversations
           </h2>
-          <button
-            onClick={refreshAndReset}
-            disabled={conversationsLoading}
-            className="text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50 dark:hover:text-slate-300"
-          >
-            {conversationsLoading ? 'Refreshing…' : 'Refresh'}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={refreshAndReset}
+              disabled={conversationsLoading}
+              className="text-xs text-slate-400 hover:text-slate-600 disabled:opacity-50 dark:hover:text-slate-300"
+            >
+              {conversationsLoading ? 'Refreshing…' : 'Refresh'}
+            </button>
+            <button
+              onClick={clearAllConversations}
+              disabled={clearing || conversations.length === 0}
+              className="text-xs text-rose-500 hover:text-rose-700 disabled:opacity-50 dark:text-rose-400 dark:hover:text-rose-300"
+            >
+              {clearing ? 'Clearing…' : 'Clear all'}
+            </button>
+          </div>
         </div>
         <button
           onClick={startNewConversation}
