@@ -105,6 +105,18 @@ If it can't join the saved network within ~20s (wrong password, AP out of
 range, etc.), it automatically reopens the setup portal so you can fix it —
 no need to remember the BOOT-button trick for that specific failure mode.
 
+**Reconfiguring later, once it's already running normally:** a brief BOOT
+press (no reboot, no holding the whole time) drops it straight back into the
+setup portal — login still required, existing WiFi/backend settings kept
+unless you change and save them. If you don't submit anything within 5
+minutes it gives up and reconnects with whatever was already stored,
+resuming normal sampling automatically. This is deliberately *not* a
+permanently-broadcasting access point: the setup AP only exists for the
+brief window you actually asked for, rather than the device continuously
+hosting an open, unauthenticated hotspot in the background — and running the
+AP and the sampling STA link at once would force both onto the same radio
+channel, interrupting anyone connected to the AP every sampling cycle.
+
 The backend also needs to actually be listening where the board can reach
 it: `uvicorn backend.main:app --reload` alone binds `127.0.0.1` (loopback
 only, invisible to the board). Start it with `--host 0.0.0.0`, and allow it

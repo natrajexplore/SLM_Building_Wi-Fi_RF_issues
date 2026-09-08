@@ -286,5 +286,11 @@ void setup() {
 
 void loop() {
   sample_and_report();
-  delay(SAMPLE_PERIOD_MS);
+  // Poll for a BOOT-button press between samples so the setup portal stays
+  // reachable on demand without a permanently-broadcasting AP (see
+  // wifi_portal.h's pollForReconfigure() docs for why).
+  for (uint32_t waited = 0; waited < SAMPLE_PERIOD_MS; waited += 200) {
+    wifiPortal::pollForReconfigure();
+    delay(200);
+  }
 }

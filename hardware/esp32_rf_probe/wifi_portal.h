@@ -18,6 +18,16 @@
 // retrying stored credentials if a previously-working network is just
 // transiently unreachable). Call it once from setup(); read wifiPortal::config()
 // afterwards for the backend host/port/path/https settings.
+//
+// wifiPortal::pollForReconfigure(), called periodically from loop(), reopens
+// the setup portal on demand (a plain BOOT press while already running
+// normally -- no reboot needed) so the setup page stays reachable without
+// making the board broadcast an open AP continuously. That was a deliberate
+// choice over a permanent AP+STA setup network: an always-open, unauthenticated
+// hotspot broadcasting nonstop is a bigger attack surface than one that only
+// exists for the brief window after a deliberate physical button press, and
+// running AP+STA concurrently forces the AP onto the same channel as the RF
+// sampling, interrupting anyone connected to it every sampling cycle.
 #pragma once
 
 #include <Arduino.h>
@@ -33,6 +43,7 @@ struct WifiPortalConfig {
 namespace wifiPortal {
   bool begin();
   const WifiPortalConfig& config();
+  void pollForReconfigure();
 }
 
 // Shared with esp32_rf_probe.ino (which uses it to tag scanned APs in the

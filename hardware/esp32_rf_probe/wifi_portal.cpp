@@ -271,6 +271,34 @@ void runPortal(uint32_t timeoutMs) {
   WiFi.softAPdisconnect(true);
 }
 
+// Attempts to join the stored network once (STA_CONNECT_TIMEOUT_MS). On
+// success, refreshes g_config from NVS and returns true; on failure, leaves
+// g_config untouched and returns false. Shared by begin()'s first-connect
+// retry loop and pollForReconfigure()'s post-portal reconnect, so both stay
+// in sync instead of two copies of the same connect logic drifting apart.
+bool connectStoredSta() {
+  String ssid = prefs.getString("ssid", "");
+  String pass = prefs.getString("pass", "");
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid.c_str(), pass.c_str());
+  Serial.printf("joining \"%s\"", ssid.c_str());
+  uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < STA_CONNECT_TIMEOUT_MS) {
+    delay(500);
+    Serial.print(".");
+  }
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println(" failed");
+    return false;
+  }
+  Serial.println(" ok");
+  g_config.backendHost = prefs.getString("host", "");
+  g_config.backendPort = prefs.getUShort("port", 8000);
+  g_config.backendPath = prefs.getString("path", "/live/ingest");
+  g_config.https = prefs.getBool("https", false);
+  return true;
+}
+
 }  // namespace
 
 namespace wifiPortal {
@@ -303,29 +331,34 @@ bool begin() {
   }
 
   while (true) {
-    String ssid = prefs.getString("ssid", "");
-    String pass = prefs.getString("pass", "");
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid.c_str(), pass.c_str());
-    Serial.printf("joining \"%s\"", ssid.c_str());
-    uint32_t start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < STA_CONNECT_TIMEOUT_MS) {
-      delay(500);
-      Serial.print(".");
-    }
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.println(" ok");
-      g_config.backendHost = prefs.getString("host", "");
-      g_config.backendPort = prefs.getUShort("port", 8000);
-      g_config.backendPath = prefs.getString("path", "/live/ingest");
-      g_config.https = prefs.getBool("https", false);
-      return true;
-    }
-    Serial.println(" failed — reopening setup portal");
+    if (connectStoredSta()) return true;
+    Serial.println("reopening setup portal");
     runPortal(PORTAL_RETRY_TIMEOUT_MS);  // returns on timeout; retry the stored creds
   }
 }
 
 const WifiPortalConfig& config() { return g_config; }
+
+void pollForReconfigure() {
+  if (digitalRead(BOOT_BUTTON_PIN) != LOW) return;
+
+  // Debounce: a deliberate press naturally outlasts electrical noise, so
+  // requiring it stay held ~300ms before acting avoids reopening the portal
+  // (and dropping the sampling link) on a spurious glitch.
+  uint32_t start = millis();
+  while (digitalRead(BOOT_BUTTON_PIN) == LOW && millis() - start < 300) {
+    delay(20);
+  }
+  if (millis() - start < 300) return;
+
+  Serial.println("BOOT pressed -- reopening setup portal (login required; existing "
+                  "WiFi/backend settings are kept unless you change and save them)");
+  runPortal(PORTAL_RETRY_TIMEOUT_MS);  // blocks; only returns via timeout (Save -> ESP.restart())
+
+  Serial.println("setup portal closed -- reconnecting");
+  while (!connectStoredSta()) {
+    runPortal(PORTAL_RETRY_TIMEOUT_MS);
+  }
+}
 
 }  // namespace wifiPortal

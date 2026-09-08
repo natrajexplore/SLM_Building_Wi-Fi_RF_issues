@@ -88,7 +88,19 @@ What actually exists:
   passwords, on revisit); a failed STA join (bad password, AP out of range)
   auto-reopens the portal with a 5-minute timeout before retrying the stored
   credentials, so a transient outage doesn't strand the device in setup mode
-  forever. HTTPS
+  forever. `wifiPortal::pollForReconfigure()`, polled from `loop()` between
+  samples, reopens the portal on a brief BOOT press *during normal
+  operation* too (login required, existing settings kept unless changed) —
+  added after the user asked for the ESP32 to "act like a WiFi router"
+  (broadcast its own network permanently); clarified they only needed to
+  reach the setup page again on demand, not real routing/NAT (which this
+  hardware can't do reliably anyway — no WAN, ~4-10 client SoftAP limit).
+  Deliberately not a permanently-broadcasting AP+STA setup: an always-open,
+  unauthenticated hotspot is a bigger attack surface than one that exists
+  only for a deliberate brief window, and concurrent AP+STA forces both onto
+  the same radio channel, interrupting anyone connected to the AP every
+  sampling cycle. `connectStoredSta()` factors the STA-join logic shared by
+  first-connect and post-reconfigure-reconnect. HTTPS
   uses `WiFiClientSecure::setInsecure()` (encrypts against passive WiFi
   eavesdropping, does not authenticate the backend — no CA infra here by
   design) against a self-signed cert from the new
