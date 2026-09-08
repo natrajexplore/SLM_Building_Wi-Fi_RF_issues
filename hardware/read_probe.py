@@ -15,7 +15,13 @@ By default, for each: POST /ingest {format:esp32} -> canonical snapshot -> POST
 With --live, each line instead goes to POST /live/ingest -- the same path the
 board's own WiFi BACKEND_URL would hit -- so it shows up in the frontend's live
 tab via GET /live/feed, and nothing is printed here per-line. Raw lines are
-appended to --save for later replay either way.
+appended to --save for later replay either way. Lines starting with "#" (see
+hardware/sample_capture.jsonl's header) are skipped, not errors.
+
+No board? The frontend's "2.4GHz Live Test" tab has a "Load demo samples"
+button (POST /live/demo) that replays hardware/sample_capture.jsonl the same
+way `--replay hardware/sample_capture.jsonl --live` would -- no CLI needed.
+This script and that button hit the same backend path either way.
 """
 from __future__ import annotations
 

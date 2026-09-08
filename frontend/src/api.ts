@@ -49,6 +49,7 @@ export const api = {
     fetch(`/live/feed?since=${sinceId}`, { cache: 'no-store' }).then((r) =>
       handle<LiveFeedResponse>(r),
     ),
+  liveDemo: () => post<LiveFeedResponse>('/live/demo', {}),
   // No temperature param — the explanation band is the app's only temperature
   // control (CLAUDE.md hard decision #3); /ask always runs at its default.
   ask: (message: string, conversationId: string | null) =>

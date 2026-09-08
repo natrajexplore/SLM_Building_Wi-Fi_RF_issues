@@ -124,7 +124,16 @@ What actually exists:
   `/live/ingest` instead of `/ingest`), runs it through `Esp32Adapter` +
   `run_diagnosis` at the same fixed diagnosis temperature as `/diagnose` (no
   caller-supplied temperature here either), and appends the result to the
-  buffer; `GET /live/feed?since=<id>` is what the frontend polls.
+  buffer tagged `source: "probe"`; `GET /live/feed?since=<id>` is what the
+  frontend polls. `POST /live/demo` is the no-hardware path: it replays
+  `hardware/sample_capture.jsonl` (6 real recorded probe captures, one
+  comment-documented scenario per RF-24-* cause reachable from ESP32-only
+  evidence, plus a deliberately ambiguous one) through the identical
+  adapter → diagnose → buffer pipeline, tagged `source: "demo"` so demo and
+  real-hardware samples never get confused in the same buffer.
+  `live_buffer.clear()` (test-only) resets both the buffer and its id
+  counter, not just the buffer — needed once more than one test hits the
+  buffer in a single run.
   `routers/ask.py`: the Submit/Ask tab is a **multi-turn chat**, not
   isolated Q&A — `POST /ask` (`{message, conversation_id}`, the latter
   omitted to start a new conversation) fetches the conversation's prior
@@ -190,7 +199,18 @@ What actually exists:
   incoming probe samples (channel, timestamp, cause_id/confidence), and
   renders the selected one through `DiagnosisView` / `ExplanationPanel`.
   "follow latest" auto-selects the newest sample; clicking an older row
-  pins the view and turns it off. **Wireless Topics** (third —
+  pins the view and turns it off. A "Load demo samples" button calls
+  `POST /live/demo` for anyone without an ESP32 board — no CLI needed — and
+  demo-sourced rows carry a `DEMO` badge (from `LiveSample.source`) so they're
+  never mistaken for real hardware readings; both can sit in the feed at
+  once. A `<details>` "How this tab works" disclosure (same pattern as the
+  Ask tab's citations) explains the with-hardware vs. without-hardware paths,
+  the tab's actual behaviour (3s poll not push, in-memory buffer resets on
+  backend restart, no live-tab temperature control), and enumerates what the
+  6 bundled demo samples each demonstrate — kept in sync **by hand** with the
+  comment block at the top of `hardware/sample_capture.jsonl` (`DEMO_CASES`
+  constant in the component); if that file's scenarios change, update both.
+  **Wireless Topics** (third —
   `components/WirelessTopicsPanel.tsx`) — a read-only browser over the
   taxonomy from `/taxonomy`, grouped by band with a band filter; picking a
   cause shows its description, discriminators, remediation intent, and
@@ -320,7 +340,9 @@ rf-slm/
 │                        ExplanationPanel,ConfidenceBadge,Section,
 │                        LiveTestPanel,AskPanel}.tsx
 ├── hardware/
-│   └── esp32_rf_probe/              # Arduino firmware + JSON spec for esp32.py [done]
+│   ├── esp32_rf_probe/              # Arduino firmware + JSON spec for esp32.py [done]
+│   ├── read_probe.py                # serial/replay -> ingest -> diagnose (or --live) [done]
+│   └── sample_capture.jsonl         # 6 recorded, RF-24-*-labelled demo captures [done]
 └── tests/
     ├── test_adapters_base.py        # [done]
     ├── test_generic_csv.py          # [done]
@@ -397,7 +419,11 @@ Do not skip ahead. Each phase gates the next.
    UNVERIFIED flags), explanation panel with the only temperature slider
    (`[0.70, 0.90]`); a second tab, **2.4GHz Live Test**, polls the live buffer
    and renders each hardware-probe sample through the same diagnosis/
-   explanation views. Still to do: an ingest UI for CSV/JSON + mapping; polish.
+   explanation views — now with a no-hardware "Load demo samples" path
+   (`POST /live/demo`, `hardware/sample_capture.jsonl`), demo/probe source
+   badges, and an in-tab explanation of both usage modes and the RF-24-*
+   test cases the demo set walks through (see the `frontend/` bullet above).
+   Still to do: an ingest UI for CSV/JSON + mapping; polish.
 9. **Validate** against real C9800 lab captures. `cisco_c9800.py` is built
    (phase 3 done) but unvalidated; still needs a lab capture set and a thin
    pyATS/Genie-or-RESTCONF glue script that fills the capture-bundle shape

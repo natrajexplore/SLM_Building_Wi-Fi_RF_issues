@@ -272,6 +272,40 @@ class Live(BackendTestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.json(), {"samples": [], "latest_id": 0})
 
+    def test_live_ingest_default_source_is_probe(self):
+        self._use_reference_backend()
+        r = self.client.post("/live/ingest", json={"format": "esp32", "document": self._esp32_doc()})
+        self.assertEqual(r.json()["source"], "probe")
+
+    def test_live_demo_replays_bundled_captures_as_demo_source(self):
+        self._use_reference_backend()
+        r = self.client.post("/live/demo")
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        # hardware/sample_capture.jsonl: healthy / RF-24-001 / RF-24-002 /
+        # RF-24-003 / RF-24-006 / RF-24-001+RF-24-006 (ambiguous, higher
+        # severity wins as the primary cause_id).
+        self.assertEqual(
+            [s["diagnosis"]["cause_id"] for s in body["samples"]],
+            [None, "RF-24-001", "RF-24-002", "RF-24-003", "RF-24-006", "RF-24-001"],
+        )
+        self.assertTrue(all(s["source"] == "demo" for s in body["samples"]))
+        ambiguous = body["samples"][-1]["diagnosis"]
+        self.assertIn("RF-24-006", [a["cause_id"] for a in ambiguous["ranked_alternatives"]])
+
+        feed = self.client.get("/live/feed", params={"since": 0})
+        self.assertEqual(len(feed.json()["samples"]), 6)
+
+    def test_live_demo_is_additive_to_existing_probe_samples(self):
+        self._use_reference_backend()
+        self.client.post("/live/ingest", json={"format": "esp32", "document": self._esp32_doc()})
+        r = self.client.post("/live/demo")
+        self.assertEqual(r.status_code, 200, r.text)
+        feed = self.client.get("/live/feed", params={"since": 0}).json()
+        self.assertEqual(len(feed["samples"]), 7)
+        self.assertEqual(feed["samples"][0]["source"], "probe")
+        self.assertTrue(all(s["source"] == "demo" for s in feed["samples"][1:]))
+
 
 class BackendSelection(unittest.TestCase):
     def test_unknown_backend_raises(self):

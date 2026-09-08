@@ -107,6 +107,7 @@ class LiveSample(BaseModel):
     received_at: str
     snapshot: CanonicalSnapshot
     diagnosis: RCAResult
+    source: Literal["probe", "demo"] = "probe"
 
 
 class LiveFeedResponse(BaseModel):

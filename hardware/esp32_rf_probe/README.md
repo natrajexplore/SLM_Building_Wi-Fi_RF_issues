@@ -98,6 +98,20 @@ temperature as `/diagnose`), and held in an in-memory buffer the frontend
 polls via `GET /live/feed`. `/ingest` still exists unchanged for one-off
 ingestion (`read_probe.py`, CSV/JSON uploads) that should not show up live.
 
+**No board at all:** the Live Test tab has a "Load demo samples" button that
+calls `POST /live/demo`, which replays `hardware/sample_capture.jsonl` — 6
+real recorded probe captures, each engineered so exactly one (or,
+deliberately, two at once) RF-24-* cause becomes assertion-eligible — through
+the identical adapter → diagnose → buffer path a real board would use. Demo
+samples carry `source: "demo"` in the feed so they're never confused with a
+real board's `source: "probe"` samples; the two can coexist in the same
+buffer. The same file also works from a terminal, printing each diagnosis
+instead of one line per POST:
+`python hardware/read_probe.py --replay hardware/sample_capture.jsonl --once`
+(drop `--once` to walk all 6), or `--live` to push them into the tab instead.
+See the comment block at the top of `sample_capture.jsonl` for what each line
+demonstrates and why RF-24-004/005 can't be reached this way.
+
 **Offline (no board):** save Serial lines to a file and run them through
 `Esp32Adapter().to_canonical(json.loads(line))` — the adapter has no device
 dependency, so the whole path is testable from a recorded capture.

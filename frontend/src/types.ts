@@ -56,6 +56,7 @@ export interface LiveSample {
   received_at: string
   snapshot: unknown
   diagnosis: RCAResult
+  source: 'probe' | 'demo'
 }
 
 export interface LiveFeedResponse {

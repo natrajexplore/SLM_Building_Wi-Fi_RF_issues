@@ -21,6 +21,7 @@ class LiveSampleDict(TypedDict):
     received_at: str
     snapshot: dict
     diagnosis: dict
+    source: str
 
 
 _MAXLEN = 200
@@ -29,13 +30,14 @@ _counter = itertools.count(1)
 _buffer: deque[LiveSampleDict] = deque(maxlen=_MAXLEN)
 
 
-def append(snapshot: dict, diagnosis: dict, received_at: str) -> LiveSampleDict:
+def append(snapshot: dict, diagnosis: dict, received_at: str, source: str = "probe") -> LiveSampleDict:
     with _lock:
         sample: LiveSampleDict = {
             "id": next(_counter),
             "received_at": received_at,
             "snapshot": snapshot,
             "diagnosis": diagnosis,
+            "source": source,
         }
         _buffer.append(sample)
         return sample
@@ -52,6 +54,8 @@ def latest_id() -> int:
 
 
 def clear() -> None:
-    """Test-only: reset the buffer between test cases."""
+    """Test-only: reset the buffer (and its id counter) between test cases."""
+    global _counter
     with _lock:
         _buffer.clear()
+        _counter = itertools.count(1)
