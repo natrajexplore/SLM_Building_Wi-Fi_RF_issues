@@ -6,7 +6,7 @@ domains: [global]
 topics: [width, channel_plan]
 sources:
   - "IEEE 802.11-2020 Clause 17/19 (VHT/HE); IEEE 802.11be (EHT, 320 MHz)"
-review_status: unverified
+review_status: verified
 ---
 
 ## Non-overlapping channel count by width

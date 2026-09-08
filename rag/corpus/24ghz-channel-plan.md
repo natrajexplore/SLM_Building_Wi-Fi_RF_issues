@@ -7,7 +7,7 @@ topics: [channel_plan]
 sources:
   - "IEEE 802.11-2020, Clause 15 (DSSS) and Annex E"
   - "ITU-R RR Appendix (2.4 GHz ISM band 2400-2483.5 MHz)"
-review_status: unverified
+review_status: verified
 ---
 
 ## Band and channel spacing

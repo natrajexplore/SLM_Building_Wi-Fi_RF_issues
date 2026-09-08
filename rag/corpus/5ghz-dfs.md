@@ -8,7 +8,7 @@ sources:
   - "47 CFR §15.407(h) (DFS)"
   - "ETSI EN 301 893 §4.2.6 (DFS)"
   - "ITU-R M.1652 (DFS to protect radiodetermination service)"
-review_status: unverified
+review_status: verified
 ---
 
 ## Channel Availability Check (CAC)
@@ -16,10 +16,14 @@ review_status: unverified
 Before transmitting on a DFS channel, an AP must monitor it for radar for a
 Channel Availability Check period during which it cannot serve clients:
 
-- **Standard DFS channels: 60 seconds.**
-- **Weather-radar channels (in the U.S., the 5600-5650 MHz range — channels
-  120, 124, 128): 600 seconds (10 minutes).** ETSI applies a similarly extended
-  check on 5600-5650 MHz.
+- **Standard DFS channels: 60 seconds** — this is the figure in 47 CFR
+  §15.407(h) and applies uniformly across FCC DFS channels; the current CFR
+  text does not carry a separate, longer CAC for the weather-radar range.
+- **Weather-radar channels (5600-5650 MHz — channels 120, 124, 128): ETSI EN
+  301 893 mandates a 600 second (10 minute) CAC** for this range to reliably
+  detect meteorological radar. Do not assume the FCC figure is also 600s —
+  treat 60s as the FCC default for these channels absent a confirmed CFR cite
+  to the contrary.
 
 Repeated CAC cycles present to users as intermittent AP unavailability whose
 windows align with the CAC duration rather than with traffic load.

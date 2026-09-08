@@ -6,7 +6,7 @@ domains: [global]
 topics: [phy_rates]
 sources:
   - "IEEE 802.11-2020, Clause 15 (HR/DSSS) and Clause 17 (OFDM)"
-review_status: unverified
+review_status: verified
 ---
 
 ## 802.11b (HR/DSSS) rates

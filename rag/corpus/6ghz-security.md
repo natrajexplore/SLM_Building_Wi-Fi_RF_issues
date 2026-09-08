@@ -7,7 +7,7 @@ topics: [security]
 sources:
   - "IEEE 802.11-2020 (PMF / MFP, RSNA)"
   - "Wi-Fi Alliance WPA3 specification; Wi-Fi CERTIFIED 6 requirements"
-review_status: unverified
+review_status: verified
 ---
 
 ## What 6 GHz requires

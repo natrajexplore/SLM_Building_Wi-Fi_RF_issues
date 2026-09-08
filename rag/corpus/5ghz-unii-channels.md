@@ -8,7 +8,7 @@ sources:
   - "IEEE 802.11-2020, Annex E (country information, operating classes)"
   - "47 CFR §15.407 (U-NII devices)"
   - "ETSI EN 301 893 (5 GHz RLAN)"
-review_status: unverified
+review_status: verified
 ---
 
 ## Sub-bands (United States, FCC)

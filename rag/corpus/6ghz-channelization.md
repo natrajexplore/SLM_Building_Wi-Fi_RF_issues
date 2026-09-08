@@ -8,7 +8,7 @@ sources:
   - "IEEE 802.11ax-2021 / 802.11-2024 (6 GHz operation)"
   - "47 CFR §15.407 as amended by FCC 20-51 (6 GHz Report and Order, 2020)"
   - "CEPT ECC Decision (20)01 (5945-6425 MHz)"
-review_status: unverified
+review_status: verified
 ---
 
 ## Band extent

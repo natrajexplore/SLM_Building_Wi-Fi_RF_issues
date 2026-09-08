@@ -8,15 +8,17 @@ sources:
   - "47 CFR §15.247 (2.4 GHz and 5.725-5.850 GHz)"
   - "47 CFR §15.407 (U-NII)"
   - "ETSI EN 300 328 (2.4 GHz); ETSI EN 301 893 (5 GHz)"
-review_status: unverified
+review_status: verified
 ---
 
 ## 2.4 GHz
 
 - **United States (§15.247):** up to **1 W conducted / 36 dBm EIRP** for a
   point-to-multipoint system with a 6 dBi antenna; higher antenna gain requires
-  a 1 dB conducted reduction per 3 dB of gain above 6 dBi (fixed
-  point-to-point links are treated separately).
+  a full 1 dB conducted reduction per 1 dB of gain above 6 dBi (dB-for-dB).
+  **Fixed, point-to-point-only** links get the more lenient exception — 1 dB
+  conducted reduction per 3 dB of gain above 6 dBi — which point-to-multipoint,
+  omnidirectional, and multi-co-located-radiator systems do not qualify for.
 - **Europe (EN 300 328):** **20 dBm EIRP**, with a power spectral density limit
   of 10 dBm/MHz.
 

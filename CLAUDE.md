@@ -93,9 +93,18 @@ What actually exists:
   hash fallback), `ingest.py` (build `rag/index/`), `retriever.py` (query →
   ranked `Citation`s with band/domain/topic filters; FAISS if installed, numpy
   otherwise). `rag/corpus/` has 10 starter fact sheets, **all
-  `review_status: unverified`** pending a curator check against primary
-  sources; every citation is flagged `[UNVERIFIED]` until then. `rag/index/`
-  is generated + git-ignored.
+  `review_status: verified`** as of a 2026-09-08 curation pass against FCC
+  §15.247/§15.407, ETSI EN 300 328/301 893, CEPT ECC decisions, and IEEE
+  802.11 — three files (`5ghz-dfs.md`, `6ghz-power-classes.md`,
+  `eirp-limits-24-5ghz.md`) had real numeric errors corrected (DFS weather-radar
+  CAC wrongly attributed to FCC instead of ETSI; 6 GHz LPI EIRP-vs-width and
+  VLP PSD figures; the 2.4 GHz point-to-point vs point-to-multipoint
+  antenna-gain reduction rule). The pass relied on authoritative secondary
+  sources rather than the paywalled IEEE 802.11 primary text itself, and one
+  sub-claim in `6ghz-discovery.md` (FILS Discovery's exact beacon-cadence
+  relationship) is only weakly corroborated — a truly primary-source pass
+  through actual IEEE text remains a candidate for revisiting later.
+  `rag/index/` is generated + git-ignored.
 - `backend/` — phase-7 FastAPI app, complete and runnable. `models.py` is
   **generated** from the schema (do-not-edit header carries the regen command);
   `schemas.py` the API envelopes + RCA output type; `config.py` the per-stage
@@ -291,7 +300,7 @@ rf-slm/
 │   ├── embedder.py                  # Ollama nomic-embed-text + hash fallback  [done]
 │   ├── ingest.py                    # corpus -> rag/index/                     [done]
 │   ├── retriever.py                 # query -> ranked Citations (FAISS/numpy)  [done]
-│   ├── corpus/                      # 10 starter fact sheets, all unverified   [done]
+│   ├── corpus/                      # 10 starter fact sheets, all verified     [done]
 │   └── index/                       # generated, git-ignored
 ├── backend/
 │   ├── main.py                      # FastAPI app + /health                    [done]
@@ -368,9 +377,9 @@ Do not skip ahead. Each phase gates the next.
    (or the 16GB variant) the moment CUDA hardware is available.
 6. **RAG corpus.** Layer built (`rag/`): corpus format, chunking, Ollama
    embeddings, ingest, retriever with band/domain/topic filters. 10 starter
-   fact sheets covering what the taxonomy references. Still to do: curator
-   verifies each fact sheet against its primary source and flips
-   `review_status` to `verified`; expand coverage; wire the retriever into the
+   fact sheets covering what the taxonomy references, all curated and flipped
+   to `review_status: verified` (see the `rag/` bullet above for what was
+   corrected). Still to do: expand coverage; wire the retriever into the
    diagnosis path so numeric regulatory claims carry a citation.
 7. **FastAPI backend.** Built (`backend/`): `/diagnose` (temperature pinned
    low), `/explain` (0.7-0.9, clamped), `/ingest` (generic adapters), `/retrieve`

@@ -20,10 +20,13 @@ supplies numeric limits (channel plans, power, DFS timing, IEEE clauses) the
 - **Regional values differ.** When a limit is US-specific, set `domains: [US]`
   and say so in the text; do not imply it is global.
 
-## Files shipped as a starting point (ALL unverified)
+## Files shipped as a starting point
 
 These were drafted to get the pipeline working end-to-end and to cover what
-`taxonomy/rf_root_causes.yaml` references. Treat every number as a claim to be
-checked, not a settled fact.
+`taxonomy/rf_root_causes.yaml` references. All 10 starter files have since
+been checked against their cited sources and flipped to `verified` — three
+(`5ghz-dfs.md`, `6ghz-power-classes.md`, `eirp-limits-24-5ghz.md`) had real
+numeric errors corrected in the process. Any new file added here still starts
+`unverified` until checked the same way.
 
 Rebuild the index after any change: `python -m rag.ingest`

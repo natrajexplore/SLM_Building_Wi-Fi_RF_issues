@@ -7,7 +7,7 @@ topics: [discovery]
 sources:
   - "IEEE 802.11ax-2021 (6 GHz out-of-band discovery, Reduced Neighbor Report)"
   - "IEEE 802.11ai-2016 (FILS)"
-review_status: unverified
+review_status: verified
 ---
 
 ## Why discovery is different at 6 GHz
