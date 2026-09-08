@@ -74,10 +74,21 @@ What actually exists:
   (`WebServer` + `DNSServer`, ESP32-core libraries only, no new external
   Arduino dependency) — scan networks, pick one (with an Open/WPA2/WPA3 auth
   badge), enter its password, set the backend host/port/path, and toggle
-  "Encrypt traffic to backend (HTTPS)". Saving writes to NVS and reboots; a
-  failed STA join (bad password, AP out of range) auto-reopens the portal
-  with a 5-minute timeout before retrying the stored credentials, so a
-  transient outage doesn't strand the device in setup mode forever. HTTPS
+  "Encrypt traffic to backend (HTTPS)". The setup page itself is login-gated
+  (HTTP Basic Auth, default `admin`/`admin`, changeable from the same page —
+  explicitly requested: "like a normal D-Link/TP-Link router configuration")
+  since the setup AP is necessarily open before it's configured; holding
+  BOOT for 10s+ (vs. a short tap, which just reopens the portal) factory-
+  resets WiFi creds *and* the admin login back to `admin`/`admin`, so a
+  mistyped new admin password can never permanently lock the portal out from
+  itself. A 5GHz section was explicitly requested then dropped once it came
+  up that this board has no 5GHz radio at all — never build a config option
+  for hardware capability that doesn't exist. Saving writes to NVS and
+  reboots (pre-filling the form with previously-saved values, except
+  passwords, on revisit); a failed STA join (bad password, AP out of range)
+  auto-reopens the portal with a 5-minute timeout before retrying the stored
+  credentials, so a transient outage doesn't strand the device in setup mode
+  forever. HTTPS
   uses `WiFiClientSecure::setInsecure()` (encrypts against passive WiFi
   eavesdropping, does not authenticate the backend — no CA infra here by
   design) against a self-signed cert from the new

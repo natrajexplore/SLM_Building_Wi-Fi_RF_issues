@@ -7,6 +7,12 @@
 // networks, pick one, enter its password, set the backend host/port/path,
 // and toggle HTTPS. Saving writes to NVS and reboots into normal operation.
 //
+// The setup page itself is login-gated (HTTP Basic Auth, default admin/admin,
+// changeable from the same page — router-style, like a fresh D-Link/TP-Link
+// admin panel) since the setup AP is necessarily open. Holding BOOT for 10s+
+// factory-resets (wipes WiFi creds AND the admin login back to admin/admin)
+// so a mistyped new admin password can never permanently lock the portal.
+//
 // wifiPortal::begin() blocks until WiFi is connected (retrying the portal
 // indefinitely on first-time setup, or with a 5-minute portal timeout before
 // retrying stored credentials if a previously-working network is just

@@ -9,6 +9,7 @@ namespace {
 constexpr int BOOT_BUTTON_PIN = 0;                      // standard on ESP32-WROOM dev boards, active-low
 constexpr uint32_t STA_CONNECT_TIMEOUT_MS = 20000;
 constexpr uint32_t PORTAL_RETRY_TIMEOUT_MS = 5UL * 60 * 1000;  // retry stored creds if nobody reconfigures
+constexpr uint32_t FACTORY_RESET_HOLD_MS = 10000;       // hold BOOT this long to wipe WiFi + admin login
 constexpr byte DNS_PORT = 53;
 constexpr int MAX_SCAN_ROWS = 32;
 
@@ -85,7 +86,32 @@ String networkListHtml() {
   return out;
 }
 
+// Router-style login gate: the setup portal is otherwise reachable by
+// anyone who joins the (necessarily open, for bootstrapping) setup AP.
+// Defaults to admin/admin like most consumer router first-boot admin
+// panels -- changeable from the same page, stored in NVS. Plaintext HTTP
+// Basic Auth over the setup AP only (never the operational network this
+// device later joins) is the same posture a real router's initial-setup
+// page has; it is not meant to resist an adversary already in physical
+// range of the setup window.
+bool checkAuth() {
+  String user = prefs.getString("admin_user", "admin");
+  String pass = prefs.getString("admin_pass", "admin");
+  if (!server.authenticate(user.c_str(), pass.c_str())) {
+    server.requestAuthentication();
+    return false;
+  }
+  return true;
+}
+
 String portalPage() {
+  String curSsid = htmlEscape(prefs.getString("ssid", ""));
+  String curHost = htmlEscape(prefs.getString("host", ""));
+  uint16_t curPort = prefs.getUShort("port", 8000);
+  String curPath = htmlEscape(prefs.getString("path", "/live/ingest"));
+  bool curHttps = prefs.getBool("https", false);
+  String curAdminUser = htmlEscape(prefs.getString("admin_user", "admin"));
+
   String page =
     "<!doctype html><html><head><meta charset=\"utf-8\">"
     "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -116,26 +142,36 @@ String portalPage() {
   page += networkListHtml();
   page +=
     "<label class=\"field\">Network name (SSID)</label>"
-    "<input type=\"text\" id=\"ssid\" name=\"ssid\" required>"
+    "<input type=\"text\" id=\"ssid\" name=\"ssid\" value=\"" + curSsid + "\" required>"
     "<label class=\"field\">Password</label>"
-    "<input type=\"password\" name=\"pass\">"
+    "<input type=\"password\" name=\"pass\" placeholder=\"" +
+    String(curSsid.length() ? "(unchanged)" : "") + "\">"
     "<div id=\"openWarn\" class=\"warn\">This network has no password — anyone nearby can read its "
     "traffic. Turn on &quot;Encrypt traffic to backend&quot; below to at least protect this probe's data.</div>"
     "</div>"
     "<div class=\"card\">"
     "<label class=\"field\">Backend host (this machine's LAN IP — not &quot;localhost&quot;)</label>"
-    "<input type=\"text\" name=\"host\" placeholder=\"192.168.1.50\" required>"
+    "<input type=\"text\" name=\"host\" value=\"" + curHost + "\" placeholder=\"192.168.1.50\" required>"
     "<label class=\"field\">Backend port</label>"
-    "<input type=\"number\" name=\"port\" value=\"8000\" required>"
+    "<input type=\"number\" name=\"port\" value=\"" + String(curPort) + "\" required>"
     "<label class=\"field\">Path</label>"
-    "<input type=\"text\" name=\"path\" value=\"/live/ingest\" required>"
+    "<input type=\"text\" name=\"path\" value=\"" + curPath + "\" required>"
     "<div class=\"checkline\">"
-    "<input type=\"checkbox\" id=\"https\" name=\"https\" value=\"1\">"
+    "<input type=\"checkbox\" id=\"https\" name=\"https\" value=\"1\"" +
+    String(curHttps ? " checked" : "") + ">"
     "<label for=\"https\">Encrypt traffic to backend (HTTPS)</label>"
     "</div>"
     "<p class=\"https-note\">Requires the backend running with --ssl-keyfile/--ssl-certfile "
     "(see generate_dev_cert.py). Encrypts against eavesdropping on this WiFi network; does not "
     "verify the backend's identity (self-signed development certificate).</p>"
+    "</div>"
+    "<div class=\"card\">"
+    "<label class=\"field\">Admin username</label>"
+    "<input type=\"text\" name=\"admin_user\" value=\"" + curAdminUser + "\" required>"
+    "<label class=\"field\">New admin password</label>"
+    "<input type=\"password\" name=\"admin_pass\" placeholder=\"leave blank to keep unchanged\">"
+    "<p class=\"https-note\">Protects this setup page itself. Defaults to admin/admin on a fresh "
+    "board — change it here. This login is separate from the WiFi password above.</p>"
     "</div>"
     "<button type=\"submit\">Save &amp; connect</button>"
     "</form></body></html>";
@@ -143,10 +179,13 @@ String portalPage() {
 }
 
 void handleRoot() {
+  if (!checkAuth()) return;
   server.send(200, "text/html", portalPage());
 }
 
 void handleSave() {
+  if (!checkAuth()) return;
+
   String ssid = server.arg("ssid");
   if (ssid.isEmpty()) {
     server.send(400, "text/plain", "SSID is required");
@@ -157,13 +196,28 @@ void handleSave() {
   long portArg = server.arg("port").toInt();
   String path = server.arg("path");
   bool https = server.hasArg("https");
+  String adminUser = server.arg("admin_user");
+  String adminPass = server.arg("admin_pass");
 
+  // Read the previously-stored SSID before overwriting it below -- needed
+  // to tell "re-saving the same network with a blank password field" (keep
+  // the existing password) apart from "a new/different network with a
+  // deliberately blank password" (a real open network; write the blank).
+  String prevSsid = prefs.getString("ssid", "");
   prefs.putString("ssid", ssid);
-  prefs.putString("pass", pass);
+  if (!(pass.isEmpty() && ssid == prevSsid)) {
+    prefs.putString("pass", pass);
+  }
   prefs.putString("host", host);
   prefs.putUShort("port", portArg > 0 && portArg <= 65535 ? (uint16_t)portArg : 8000);
   prefs.putString("path", path.isEmpty() ? "/live/ingest" : path);
   prefs.putBool("https", https);
+  if (!adminUser.isEmpty()) {
+    prefs.putString("admin_user", adminUser);
+  }
+  if (!adminPass.isEmpty()) {
+    prefs.putString("admin_pass", adminPass);
+  }
   prefs.putBool("cfgd", true);
 
   server.send(200, "text/html",
@@ -199,8 +253,11 @@ void runPortal(uint32_t timeoutMs) {
   server.onNotFound(handleNotFound);
   server.begin();
 
-  Serial.printf("setup portal: join WiFi \"%s\" then open http://%s/\n",
-                apName().c_str(), apIP.toString().c_str());
+  Serial.printf("setup portal: join WiFi \"%s\" then open http://%s/ "
+                "(login: %s / %s unless you've changed it)\n",
+                apName().c_str(), apIP.toString().c_str(),
+                prefs.getString("admin_user", "admin").c_str(),
+                prefs.getString("admin_pass", "admin").c_str());
 
   uint32_t start = millis();
   while (timeoutMs == 0 || millis() - start < timeoutMs) {
@@ -223,6 +280,23 @@ bool begin() {
 
   pinMode(BOOT_BUTTON_PIN, INPUT_PULLUP);
   bool forceSetup = digitalRead(BOOT_BUTTON_PIN) == LOW;
+
+  if (forceSetup) {
+    // Keep measuring how long BOOT stays held: a short tap just reopens the
+    // portal (existing admin login still required); holding it the full
+    // FACTORY_RESET_HOLD_MS wipes WiFi creds AND the admin login back to
+    // admin/admin -- the same "hold reset for 10s" recovery a real router
+    // offers, needed here so a mistyped new admin password can't
+    // permanently lock the portal out from itself.
+    uint32_t heldStart = millis();
+    while (digitalRead(BOOT_BUTTON_PIN) == LOW && millis() - heldStart < FACTORY_RESET_HOLD_MS) {
+      delay(50);
+    }
+    if (millis() - heldStart >= FACTORY_RESET_HOLD_MS) {
+      Serial.println("BOOT held 10s+ -- factory reset (WiFi + admin login cleared)");
+      prefs.clear();
+    }
+  }
 
   if (!prefs.getBool("cfgd", false) || forceSetup) {
     runPortal(0);  // blocks; only exits via ESP.restart() in handleSave()

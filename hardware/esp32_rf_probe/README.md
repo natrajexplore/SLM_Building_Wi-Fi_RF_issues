@@ -68,12 +68,32 @@ probes don't collide). Connect to it — most phones/laptops will pop the
 setup page automatically (captive-portal detection); otherwise browse to
 `http://192.168.4.1/`.
 
+**The page itself requires a login** — HTTP Basic Auth, default
+**`admin` / `admin`** on a fresh board, exactly like a factory-default
+D-Link/TP-Link admin panel. Change it from the same page under "Admin
+username" / "New admin password" (leave the password field blank to keep it
+unchanged). This login is separate from the WiFi password above — it only
+protects the setup page, not your actual network. Since the setup AP is
+necessarily open (nothing to authenticate against before it's configured),
+this login is a courtesy against a passerby casually opening the page during
+your setup window, not a defense against someone already using tools to
+snoop that same open AP — same posture a real router's first-boot admin
+panel has.
+
+**If you change the admin password and it gets locked out somehow** (typo,
+forgotten change): hold BOOT for **10+ seconds** at power-on/reset — this
+does a full factory reset (wipes the WiFi credentials *and* the admin login
+back to `admin`/`admin`), not just a "reopen the portal" like a short tap. A
+short BOOT tap reopens the portal but still requires whatever admin login is
+currently stored.
+
 The page lists nearby networks with an auth badge (colour-coded — red for
 Open, green for WPA2/WPA3) so you can see at a glance which one is
 unencrypted; picking an Open network shows an inline warning. Fill in:
 
 - The network's SSID/password (or type one manually if it didn't show up in
-  the scan).
+  the scan). Previously-saved values (except passwords, which are never
+  echoed back) are pre-filled if you're revisiting the portal.
 - The backend's host, port, and path (defaults `8000` / `/live/ingest`).
   **Must be the backend machine's actual LAN IP, never `localhost`** — from
   the board's own network stack, `localhost` means the board itself, not the
