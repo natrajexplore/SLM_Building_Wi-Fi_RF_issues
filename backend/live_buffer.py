@@ -1,7 +1,8 @@
 """In-memory ring buffer of live probe samples for the frontend's 2.4 GHz Live
 Test tab.
 
-A probe (e.g. `hardware/esp32_rf_probe`, `BACKEND_URL` pointed at
+A probe (e.g. `hardware/esp32_rf_probe`, its backend URL — set via the
+device's own setup portal, not a compile-time macro — pointed at
 `/live/ingest`) posts one sample at a time; the frontend polls `/live/feed`
 for anything newer than the last id it saw. Single-process, in-memory only —
 samples live only as long as this backend process runs. That is the right

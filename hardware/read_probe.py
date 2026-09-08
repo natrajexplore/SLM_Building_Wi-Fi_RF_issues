@@ -22,25 +22,34 @@ No board? The frontend's "2.4GHz Live Test" tab has a "Load demo samples"
 button (POST /live/demo) that replays hardware/sample_capture.jsonl the same
 way `--replay hardware/sample_capture.jsonl --live` would -- no CLI needed.
 This script and that button hit the same backend path either way.
+
+If the backend is running with --ssl-keyfile/--ssl-certfile (see
+generate_dev_cert.py), point --backend at an https:// URL and pass
+--insecure -- the self-signed dev cert has no CA chain, so plain TLS
+verification would otherwise fail with CERTIFICATE_VERIFY_FAILED. This
+mirrors the ESP32 firmware's own setInsecure() choice: it stops passive
+eavesdropping on the WiFi, not an active man-in-the-middle.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import ssl
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 
-def _post(backend: str, path: str, obj: dict) -> dict:
+def _post(backend: str, path: str, obj: dict, insecure: bool = False) -> dict:
     req = urllib.request.Request(
         backend.rstrip("/") + path,
         data=json.dumps(obj).encode(),
         headers={"Content-Type": "application/json"},
     )
+    context = ssl._create_unverified_context() if insecure else None
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=60, context=context) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as e:
         raise SystemExit(f"{path} -> HTTP {e.code}: {e.read().decode()[:300]}")
@@ -49,28 +58,33 @@ def _post(backend: str, path: str, obj: dict) -> dict:
                          "uvicorn backend.main:app --port 8000")
 
 
-def handle(line: str, backend: str, save, live: bool) -> None:
+def handle(line: str, backend: str, save, live: bool, insecure: bool = False) -> bool:
+    """Returns True if this line was an actual sample (posted/printed), False
+    if it was skipped (blank, a comment, bad JSON, or a probe-reported
+    error) -- so callers' --once means "stop after one real sample," not
+    "stop after one line," which matters now that capture files can carry a
+    "#"-prefixed comment header (see sample_capture.jsonl)."""
     line = line.strip()
     if not line or not line.startswith("{"):
-        return
+        return False
     try:
         probe = json.loads(line)
     except json.JSONDecodeError:
         print(f"  (skipped non-JSON line: {line[:80]})", file=sys.stderr)
-        return
+        return False
     if "error" in probe:
         print(f"  probe reported: {probe['error']}", file=sys.stderr)
-        return
+        return False
     if save:
         save.write(line + "\n")
         save.flush()
 
     if live:
-        sample = _post(backend, "/live/ingest", {"format": "esp32", "document": probe})
+        sample = _post(backend, "/live/ingest", {"format": "esp32", "document": probe}, insecure)
         print(f"  live sample #{sample['id']} posted ({sample['received_at']})", file=sys.stderr)
-        return
+        return True
 
-    snap = _post(backend, "/ingest", {"format": "esp32", "document": probe})["snapshots"][0]
+    snap = _post(backend, "/ingest", {"format": "esp32", "document": probe}, insecure)["snapshots"][0]
     m = snap["rf_metrics"]
     print(f"\n[{probe.get('collected_at', '?')}]  ch{snap['radio']['channel']} "
           f"({snap['radio']['band']})   co-channel={m.get('co_channel_neighbors')} "
@@ -78,7 +92,7 @@ def handle(line: str, backend: str, save, live: bool) -> None:
           f"noise={m.get('noise_floor_dbm')}dBm util~{m.get('channel_utilization_pct')}% "
           f"retry={m.get('retry_rate_pct')}%")
 
-    d = _post(backend, "/diagnose", {"snapshot": snap, "retrieve": True})
+    d = _post(backend, "/diagnose", {"snapshot": snap, "retrieve": True}, insecure)
     if d["cause_id"] is None:
         print(f"  DIAGNOSIS: no cause asserted (data gap) - need {', '.join(d['data_gaps'][:4])}")
     else:
@@ -92,16 +106,16 @@ def handle(line: str, backend: str, save, live: bool) -> None:
     for c in d["citations"]:
         flag = "" if c["review_status"] == "verified" else " [UNVERIFIED]"
         print(f"     cite: {c['title']} ({'; '.join(c['sources'])}){flag}")
+    return True
 
 
-def run_replay(path: Path, backend: str, once: bool, save, live: bool) -> None:
+def run_replay(path: Path, backend: str, once: bool, save, live: bool, insecure: bool = False) -> None:
     for line in path.read_text(encoding="utf-8").splitlines():
-        handle(line, backend, save, live)
-        if once:
+        if handle(line, backend, save, live, insecure) and once:
             return
 
 
-def run_serial(port: str, baud: int, backend: str, once: bool, save, live: bool) -> None:
+def run_serial(port: str, baud: int, backend: str, once: bool, save, live: bool, insecure: bool = False) -> None:
     try:
         import serial  # pyserial
     except ImportError:
@@ -116,8 +130,7 @@ def run_serial(port: str, baud: int, backend: str, once: bool, save, live: bool)
             buf += chunk
             while "\n" in buf:
                 line, buf = buf.split("\n", 1)
-                handle(line, backend, save, live)
-                if once:
+                if handle(line, backend, save, live, insecure) and once:
                     return
 
 
@@ -133,14 +146,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--live", action="store_true",
                      help="POST /live/ingest instead of /ingest+/diagnose, "
                           "so samples show up in the frontend's 2.4GHz Live Test tab")
+    ap.add_argument("--insecure", action="store_true",
+                     help="skip TLS certificate verification for an https:// --backend "
+                          "(needed for the self-signed dev cert from generate_dev_cert.py)")
     args = ap.parse_args(argv)
 
     save = open(args.save, "a", encoding="utf-8") if args.save else None
     try:
         if args.replay:
-            run_replay(args.replay, args.backend, args.once, save, args.live)
+            run_replay(args.replay, args.backend, args.once, save, args.live, args.insecure)
         else:
-            run_serial(args.port, args.baud, args.backend, args.once, save, args.live)
+            run_serial(args.port, args.baud, args.backend, args.once, save, args.live, args.insecure)
     except KeyboardInterrupt:
         pass
     finally:

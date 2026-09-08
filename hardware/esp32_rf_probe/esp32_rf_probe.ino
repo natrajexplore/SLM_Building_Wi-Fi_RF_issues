@@ -7,10 +7,12 @@
 // false downstream. Board package >= 3.0, ArduinoJson >= 7.
 
 #include "config.h"
+#include "wifi_portal.h"
 
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <time.h>
 #include <BLEDevice.h>
@@ -131,19 +133,8 @@ static void mac_str(const uint8_t* m, char* out) {
   sprintf(out, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
 }
 
-static const char* auth_name(wifi_auth_mode_t a) {
-  switch (a) {
-    case WIFI_AUTH_OPEN: return "open";
-    case WIFI_AUTH_WEP: return "wep";
-    case WIFI_AUTH_WPA_PSK: return "wpa";
-    case WIFI_AUTH_WPA2_PSK: case WIFI_AUTH_WPA_WPA2_PSK: case WIFI_AUTH_WPA2_ENTERPRISE: return "wpa2";
-    case WIFI_AUTH_WPA3_PSK: case WIFI_AUTH_WPA2_WPA3_PSK: return "wpa3";
-#ifdef WIFI_AUTH_OWE
-    case WIFI_AUTH_OWE: return "owe";
-#endif
-    default: return "wpa2";
-  }
-}
+// auth_name() now lives in wifi_portal.h (shared with the setup portal's
+// network-list badges).
 
 static bool iso_now(char* out, size_t n) {
   time_t t = time(nullptr);
@@ -229,34 +220,42 @@ static void sample_and_report() {
   bt["classic_devices"] = 0;                      // classic BT inquiry not run
   if (ble_strongest > -127) bt["strongest_rssi"] = ble_strongest;
 
-#ifdef STA_SSID
-  JsonObject sta = doc["sta"].to<JsonObject>();
-  sta["connected"] = WiFi.isConnected();
   if (WiFi.isConnected()) {
+    JsonObject sta = doc["sta"].to<JsonObject>();
+    sta["connected"] = true;
     char bs[18]; mac_str(WiFi.BSSID(), bs);
     sta["bssid"] = bs; sta["ssid"] = WiFi.SSID();
     sta["rssi"] = WiFi.RSSI(); sta["channel"] = WiFi.channel();
   }
-#endif
 
   // 5. output
   serializeJson(doc, Serial);
   Serial.println();
 
-#ifdef BACKEND_URL
-  if (WiFi.isConnected()) {
+  const WifiPortalConfig& cfg = wifiPortal::config();
+  if (WiFi.isConnected() && cfg.backendHost.length() > 0) {
     JsonDocument env;
     env["format"] = "esp32";
     env["document"] = doc;
     String body; serializeJson(env, body);
+    String url = String(cfg.https ? "https://" : "http://") + cfg.backendHost + ":" +
+                 String(cfg.backendPort) + cfg.backendPath;
     HTTPClient http;
-    http.begin(BACKEND_URL);
-    http.addHeader("Content-Type", "application/json");
-    int code = http.POST(body);
-    Serial.printf("POST %s -> %d\n", BACKEND_URL, code);
+    WiFiClientSecure secureClient;
+    int code;
+    if (cfg.https) {
+      secureClient.setInsecure();   // self-signed dev cert, no CA chain -- see README
+      http.begin(secureClient, url);
+      http.addHeader("Content-Type", "application/json");
+      code = http.POST(body);
+    } else {
+      http.begin(url);
+      http.addHeader("Content-Type", "application/json");
+      code = http.POST(body);
+    }
+    Serial.printf("POST %s -> %d\n", url.c_str(), code);
     http.end();
   }
-#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -264,19 +263,22 @@ void setup() {
   Serial.begin(115200);
   delay(200);
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.print("wifi");
-  for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) { delay(500); Serial.print("."); }
-  Serial.println(WiFi.status() == WL_CONNECTED ? " ok" : " (no join — SNTP will fail)");
+  // Connects using saved config, or hosts the "RF-Probe-Setup-XXXX" captive
+  // portal until it has one (see wifi_portal.cpp). Blocks until STA is up.
+  wifiPortal::begin();
 
   configTime(0, 0, "pool.ntp.org", "time.google.com");
   for (int i = 0; i < 20 && time(nullptr) < 1700000000; i++) delay(500);
 
-#ifndef STA_SSID
-  WiFi.disconnect(true, false);                   // keep radio, drop association
-  WiFi.mode(WIFI_STA);
-#endif
+  if (wifiPortal::config().backendHost.isEmpty()) {
+    // No backend configured -- Serial-only mode. Drop the association after
+    // SNTP so an ongoing STA link doesn't compete with promiscuous sampling
+    // for radio time (the same tradeoff the old compile-time STA_SSID toggle
+    // made; now keyed off whether there's actually a reason to stay
+    // connected instead of a hardcoded macro).
+    WiFi.disconnect(true, false);
+    WiFi.mode(WIFI_STA);
+  }
 
   BLEDevice::init("");
   BLEDevice::getScan()->setActiveScan(false);

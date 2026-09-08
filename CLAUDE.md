@@ -63,6 +63,46 @@ What actually exists:
   2.4 GHz only, `spectrum_capable` always false, BLE scan → `non_wifi_interferers`
   bluetooth hint, beacon IEs → regulatory_domain / min rate / CSA events. Firmware
   + JSON spec in `hardware/esp32_rf_probe/`. `POST /ingest {format:"esp32"}`.
+  The JSON shape this adapter consumes is unchanged by the firmware's
+  on-device setup portal (below) — that only changed how the board learns its
+  WiFi/backend settings, not what it samples or emits.
+- `hardware/esp32_rf_probe/wifi_portal.h` + `.cpp` — replaces the firmware's
+  old compile-time `WIFI_SSID`/`WIFI_PASS`/`BACKEND_URL`/`STA_SSID` macros
+  with a runtime, NVS-backed (`Preferences`) flow: on first boot, or when the
+  BOOT button (GPIO0) is held at power-on, the board hosts its own
+  `RF-Probe-Setup-XXXX` access point with a captive-portal setup page
+  (`WebServer` + `DNSServer`, ESP32-core libraries only, no new external
+  Arduino dependency) — scan networks, pick one (with an Open/WPA2/WPA3 auth
+  badge), enter its password, set the backend host/port/path, and toggle
+  "Encrypt traffic to backend (HTTPS)". Saving writes to NVS and reboots; a
+  failed STA join (bad password, AP out of range) auto-reopens the portal
+  with a 5-minute timeout before retrying the stored credentials, so a
+  transient outage doesn't strand the device in setup mode forever. HTTPS
+  uses `WiFiClientSecure::setInsecure()` (encrypts against passive WiFi
+  eavesdropping, does not authenticate the backend — no CA infra here by
+  design) against a self-signed cert from the new
+  `hardware/esp32_rf_probe/generate_dev_cert.py` (needs `cryptography`, added
+  to `requirements-dev.txt`) written to `.local/certs/` (same git-ignored
+  convention as `.local/postgres/`). `hardware/read_probe.py` gained a
+  matching `--insecure` flag for testing against that same cert from a
+  desktop; fixed a real bug found while adding it — `--once` was stopping
+  after the *first line* of a replay file rather than the first actual
+  sample, which silently broke on `sample_capture.jsonl` once it grew a
+  `#`-prefixed comment header (`handle()` now returns whether it processed a
+  real sample; `--once` checks that, not line position). Backend needs no
+  application-code change for HTTPS — `uvicorn --ssl-keyfile/--ssl-certfile`
+  handles TLS at the transport level via the stdlib `ssl` module.
+  `config.h`/`config.h.example` now hold only sampling parameters
+  (`PROBE_CHANNEL`, `CHANNEL_WIDTH_MHZ`, `SAMPLE_WINDOW_MS`,
+  `BLE_SCAN_SECONDS`, `SAMPLE_PERIOD_MS`) — a breaking change for any
+  already-flashed board on the old compile-time flow, which needs a reflash
+  and one trip through the portal; no dual-path migration was built, since
+  maintaining both would add real complexity for no lasting benefit once the
+  portal exists. Unverified beyond what's testable from a desktop (backend
+  TLS serving, `read_probe.py --insecure` round-tripping through the real
+  adapter/diagnose path) — the portal itself, NVS persistence, and
+  `WiFiClientSecure` POST need real-hardware verification, not done in this
+  session (no physical board access).
 - `adapters/cisco_c9800.py` — `CiscoC9800Adapter`: Cisco Catalyst 9800 WLC
   "capture bundle" (a documented normalized dict, not raw CLI/RESTCONF —
   see the module docstring for why: exact Genie/YANG field names vary by
@@ -119,9 +159,9 @@ What actually exists:
   ring buffer (last 200 samples) feeding the 2.4 GHz hardware live-test tab —
   no persistence, resets on restart, deliberately not a durability guarantee.
   `routers/live.py`: `POST /live/ingest` accepts the same `{format:"esp32",
-  document:{...}}` envelope as `/ingest` (so `hardware/esp32_rf_probe`'s
-  existing `BACKEND_URL` POST needs no firmware change — just point it at
-  `/live/ingest` instead of `/ingest`), runs it through `Esp32Adapter` +
+  document:{...}}` envelope as `/ingest` (so `hardware/esp32_rf_probe`'s POST
+  needs no firmware change — set the path to `/live/ingest` instead of
+  `/ingest` in the board's own setup portal), runs it through `Esp32Adapter` +
   `run_diagnosis` at the same fixed diagnosis temperature as `/diagnose` (no
   caller-supplied temperature here either), and appends the result to the
   buffer tagged `source: "probe"`; `GET /live/feed?since=<id>` is what the
@@ -260,11 +300,17 @@ What actually exists:
   `127.0.0.1` only — fine for the frontend on the same machine, but invisible
   to a real `hardware/esp32_rf_probe` board on the LAN. For real-hardware
   testing use `uvicorn backend.main:app --host 0.0.0.0 --port 8000` (allow it
-  through Windows Firewall on Private networks if prompted), point the
-  board's `config.h` `BACKEND_URL` at that machine's actual LAN IP (`ipconfig`
-  — never `localhost`, which from the board's perspective means the board
-  itself), and watch its Serial output for `POST <url> -> <code>` after each
-  sample (`esp32_rf_probe.ino`'s `sample_and_report()`) to confirm delivery.
+  through Windows Firewall on Private networks if prompted), and in the
+  board's own setup portal (see the `hardware/esp32_rf_probe/wifi_portal.h`
+  bullet above) set the backend host to that machine's actual LAN IP
+  (`ipconfig` — never `localhost`, which from the board's perspective means
+  the board itself), then watch its Serial output for `POST <url> -> <code>`
+  after each sample to confirm delivery. For HTTPS (the portal's "Encrypt
+  traffic to backend" toggle), generate a self-signed dev cert first:
+  `python hardware/esp32_rf_probe/generate_dev_cert.py --host <LAN IP>`
+  (needs `pip install -r requirements-dev.txt`), then add
+  `--ssl-keyfile .local/certs/key.pem --ssl-certfile .local/certs/cert.pem`
+  to the uvicorn command above.
   `RF_SLM_BACKEND`: `ollama` (default), `adapter` (phase-5 LoRA), `reference`
   (deterministic, no model — good for exercising the frontend), `stub` (no
   model, tests only). Regenerate `backend/models.py` after a schema change
@@ -355,7 +401,10 @@ rf-slm/
 │                        LiveTestPanel,AskPanel}.tsx
 ├── hardware/
 │   ├── esp32_rf_probe/              # Arduino firmware + JSON spec for esp32.py [done]
-│   ├── read_probe.py                # serial/replay -> ingest -> diagnose (or --live) [done]
+│   │   ├── esp32_rf_probe.ino       # sampling loop; delegates WiFi/backend to wifi_portal [done]
+│   │   ├── wifi_portal.h / .cpp     # on-device captive-portal WiFi + backend + HTTPS setup [done]
+│   │   └── generate_dev_cert.py     # self-signed TLS cert for local HTTPS testing [done]
+│   ├── read_probe.py                # serial/replay -> ingest -> diagnose (or --live, --insecure) [done]
 │   └── sample_capture.jsonl         # 6 recorded, RF-24-*-labelled demo captures [done]
 └── tests/
     ├── test_adapters_base.py        # [done]

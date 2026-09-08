@@ -1,3 +1,4 @@
 # Development-only tooling. Not needed to run the app or the test suite.
 
 datamodel-code-generator>=0.26   # regenerates backend/models.py from the JSON schema
+cryptography>=42                # hardware/esp32_rf_probe/generate_dev_cert.py (self-signed TLS cert for local HTTPS testing)

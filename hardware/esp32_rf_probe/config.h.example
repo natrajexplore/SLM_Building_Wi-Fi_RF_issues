@@ -1,25 +1,16 @@
 // Copy to config.h and edit. config.h is git-ignored.
+//
+// WiFi network, password, and backend/security settings are NOT here
+// anymore -- they're configured at runtime via the on-device setup portal
+// (see wifi_portal.h/.cpp and the README's "Use it" section): first boot
+// (or holding the BOOT button at power-on) opens an "RF-Probe-Setup-XXXX"
+// access point with a setup page. This file only holds what to sample.
 #pragma once
-
-// --- network (required: SNTP time + optional POST) ---
-#define WIFI_SSID   "your-ssid"
-#define WIFI_PASS   "your-pass"
 
 // --- what to sample ---
 #define PROBE_CHANNEL      6      // 1..13
 #define CHANNEL_WIDTH_MHZ  20     // 20 or 40
 #define SAMPLE_WINDOW_MS   3000   // promiscuous capture length
 #define BLE_SCAN_SECONDS   3
-
-// --- optional ---
-// If set, briefly associate to this SSID to read link RSSI and mark same_ess.
-// #define STA_SSID  "corp"
-
-// If set, POST each sample as {"format":"esp32","document":{...}}.
-// Leave undefined for Serial-only output.
-// Point at /live/ingest to feed the frontend's "2.4GHz Live Test" tab
-// (each sample is diagnosed and held for polling); point at /ingest instead
-// for one-off ingestion that should NOT appear in the live tab.
-// #define BACKEND_URL  "http://192.168.1.50:8000/live/ingest"
 
 #define SAMPLE_PERIOD_MS  15000   // delay between samples in loop()

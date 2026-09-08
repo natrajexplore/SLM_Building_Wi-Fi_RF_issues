@@ -2,9 +2,10 @@
 probe live feed, and a no-hardware substitute for it.
 
 `hardware/esp32_rf_probe` already POSTs `{"format":"esp32","document":{...}}`
-to `BACKEND_URL` on every sample (see esp32_rf_probe.ino) — the same envelope
-`/ingest` accepts. Point `BACKEND_URL` at `/live/ingest` instead of `/ingest`
-to feed the frontend's "2.4GHz Live Test" tab: each sample is normalized,
+on every sample to whatever backend host/path its on-device setup portal was
+given (see wifi_portal.cpp) — the same envelope `/ingest` accepts. Set the
+path to `/live/ingest` instead of `/ingest` in the portal to feed the
+frontend's "2.4GHz Live Test" tab: each sample is normalized,
 diagnosed at the fixed diagnosis temperature (same path as `/diagnose`, no
 caller-supplied temperature here either), and held in `live_buffer` for the
 frontend to poll. `/ingest` is unchanged and still the right endpoint for
