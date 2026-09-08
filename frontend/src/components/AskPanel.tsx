@@ -8,6 +8,7 @@ export function AskPanel() {
   const [conversationsLoading, setConversationsLoading] = useState(false)
   const [conversationsError, setConversationsError] = useState<string | null>(null)
   const [clearing, setClearing] = useState(false)
+  const [clearError, setClearError] = useState<string | null>(null)
 
   const [activeId, setActiveId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -100,13 +101,13 @@ export function AskPanel() {
     )
     if (!ok) return
     setClearing(true)
-    setConversationsError(null)
+    setClearError(null)
     try {
       await api.clearConversations()
       startNewConversation()
       setConversations([])
     } catch (e) {
-      setConversationsError(e instanceof ApiError ? e.message : String(e))
+      setClearError(e instanceof ApiError ? e.message : String(e))
     } finally {
       setClearing(false)
     }
@@ -200,6 +201,11 @@ export function AskPanel() {
         {conversationsError && (
           <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">
             Couldn't load conversations: {conversationsError}
+          </p>
+        )}
+        {clearError && (
+          <p className="mb-2 text-xs text-rose-600 dark:text-rose-400">
+            Couldn't clear conversations: {clearError}
           </p>
         )}
         {conversations.length === 0 ? (
