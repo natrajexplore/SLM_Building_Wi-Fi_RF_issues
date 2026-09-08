@@ -256,7 +256,15 @@ What actually exists:
 - Build the RAG index (phase 6): `python -m rag.ingest` (needs Ollama with
   `nomic-embed-text` pulled; `--embedder hash` for an offline test index).
   Query it: `python -m rag.retriever "6 GHz LPI EIRP limit" --band 6GHz`.
-- Run the backend (phase 7): `uvicorn backend.main:app --reload`.
+- Run the backend (phase 7): `uvicorn backend.main:app --reload`. That binds
+  `127.0.0.1` only — fine for the frontend on the same machine, but invisible
+  to a real `hardware/esp32_rf_probe` board on the LAN. For real-hardware
+  testing use `uvicorn backend.main:app --host 0.0.0.0 --port 8000` (allow it
+  through Windows Firewall on Private networks if prompted), point the
+  board's `config.h` `BACKEND_URL` at that machine's actual LAN IP (`ipconfig`
+  — never `localhost`, which from the board's perspective means the board
+  itself), and watch its Serial output for `POST <url> -> <code>` after each
+  sample (`esp32_rf_probe.ino`'s `sample_and_report()`) to confirm delivery.
   `RF_SLM_BACKEND`: `ollama` (default), `adapter` (phase-5 LoRA), `reference`
   (deterministic, no model — good for exercising the frontend), `stub` (no
   model, tests only). Regenerate `backend/models.py` after a schema change

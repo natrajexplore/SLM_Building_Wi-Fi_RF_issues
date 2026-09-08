@@ -46,8 +46,10 @@ cp config.h.example config.h      # then edit config.h
 | `SAMPLE_WINDOW_MS` | promiscuous capture length (2000–5000 typical) |
 | `BLE_SCAN_SECONDS` | BLE scan length (2–4) |
 | `STA_SSID` (optional) | if set, briefly associate to read link RSSI / mark `same_ess` |
-| `BACKEND_URL` (optional) | e.g. `http://192.168.1.50:8000/ingest` — POST each sample; leave empty for Serial-only |
+| `BACKEND_URL` (optional) | e.g. `http://192.168.1.50:8000/ingest` — POST each sample; leave empty for Serial-only. **Must be the backend machine's actual LAN IP, never `localhost`** — from the board's own network stack, `localhost` means the board itself, not the PC running the backend. Find the PC's IP with `ipconfig`. |
 | `SAMPLE_PERIOD_MS` | delay between samples (loop) |
+
+The backend also needs to actually be listening on that IP: `uvicorn backend.main:app --reload` alone binds `127.0.0.1` (loopback only, invisible to the board). Start it with `--host 0.0.0.0` for the board to reach it, and allow it through Windows Firewall on Private networks if prompted. After each sample the board prints `POST <url> -> <code>` on Serial — `200` means delivered; anything else (including no line at all) means it never reached `/live/ingest` and the fix is here, not in the backend.
 
 ## Output JSON
 
