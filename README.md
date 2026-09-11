@@ -322,11 +322,11 @@ In the board's setup portal, set the backend host to the machine's actual LAN IP
 cd frontend && npm install && npm run dev
 ```
 
-Three tabs, in display order:
+A colorful, icon-driven UI ("Multi use Wi-Fi Tool" in the header) over three tabs, in display order:
 
-1. **Submit / Ask** — multi-turn chat grounded in RAG, with a saved conversation list and citations behind a disclosure.
+1. **Submit / Ask** — multi-turn chat grounded in RAG, with a saved conversation list and citations behind a disclosure. Replies stream in token-by-token (`POST /ask/stream`) with an animated "thinking" indicator while the model is generating, rather than a blank wait.
 2. **2.4 GHz Live Test** — polls the live feed every 3s and renders each probe sample through the diagnosis and explanation views. Includes a "Load demo samples" button for anyone without a board.
-3. **Wireless Topics** — read-only browser over the taxonomy, grouped by band, with `confusable_with` links to jump between related causes.
+3. **Wireless Topics** — read-only browser over the taxonomy, grouped by band and color-coded per band (2.4/5/6 GHz each get a distinct color used consistently across filters, section headers, and the detail view), with `confusable_with` links to jump between related causes.
 
 ### Generate the dataset
 
@@ -382,12 +382,15 @@ A PostgreSQL outage degrades one `/ask` request (`stored: false`, `store_error` 
 | `GET /live/feed?since=<id>` | Polled by the Live Test tab |
 | `POST /live/demo` | Replays the bundled captures — no hardware needed |
 | `POST /ask` | Multi-turn grounded chat; persists to PostgreSQL |
+| `POST /ask/stream` | Same as `/ask`, but the answer streams token-by-token over Server-Sent Events instead of waiting for the full reply |
 | `GET /ask/conversations` | Saved conversations, most recent first |
 | `DELETE /ask/conversations` | Irreversible wipe; the UI confirms first, and a store outage returns 503 rather than a silent no-op |
 | `GET /taxonomy` | Full cause set with descriptions, discriminators, remediation intent |
 | `GET /health` | Backend, index, and `query_store_connected` status |
 
 Every model response passes through `rca.py`, which enforces `taxonomy.output_contract`. A `cause_id` not present in the taxonomy is a hard failure, not a warning.
+
+**Why `/ask/stream` exists:** on a CPU-only deployment a full `/ask` reply can take 20–80s+, and streaming shows the answer as it's generated instead of leaving the UI blank for the whole round trip. Both `/ask` and `/ask/stream` cap the prior conversation resent to the model to the last 4 turns — older turns stay saved and visible in the sidebar, they just stop being resent as prompt context, so a long conversation doesn't keep getting slower turn over turn.
 
 ---
 
