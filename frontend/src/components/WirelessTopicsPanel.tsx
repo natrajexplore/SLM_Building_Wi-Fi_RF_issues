@@ -1,7 +1,33 @@
 import { useMemo, useState } from 'react'
 import type { Band, TaxonomyCause } from '../types'
+import { BookIcon } from './Icons'
 
 const BAND_ORDER: Band[] = ['2.4GHz', '5GHz', '6GHz']
+
+// Each band gets its own color identity throughout the panel (filter tabs,
+// section headers, selected-item highlight, band chips) so 2.4/5/6 GHz are
+// visually distinguishable at a glance, not just by their text label.
+const BAND_STYLE: Record<Band, { dot: string; text: string; activeBg: string; chip: string }> = {
+  '2.4GHz': {
+    dot: 'bg-emerald-500',
+    text: 'text-emerald-600 dark:text-emerald-400',
+    activeBg: 'bg-gradient-to-r from-emerald-500 to-teal-500',
+    chip: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900 dark:text-emerald-200',
+  },
+  '5GHz': {
+    dot: 'bg-sky-500',
+    text: 'text-sky-600 dark:text-sky-400',
+    activeBg: 'bg-gradient-to-r from-sky-500 to-blue-500',
+    chip: 'bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-200',
+  },
+  '6GHz': {
+    dot: 'bg-violet-500',
+    text: 'text-violet-600 dark:text-violet-400',
+    activeBg: 'bg-gradient-to-r from-violet-500 to-fuchsia-500',
+    chip: 'bg-violet-100 text-violet-700 dark:bg-violet-900 dark:text-violet-200',
+  },
+}
+const ALL_BANDS_ACTIVE_BG = 'bg-gradient-to-r from-sky-600 to-violet-600'
 
 const SEVERITY_STYLE: Record<string, string> = {
   high: 'bg-rose-100 text-rose-700 dark:bg-rose-900 dark:text-rose-200',
@@ -36,7 +62,8 @@ export function WirelessTopicsPanel({ causes }: { causes: TaxonomyCause[] }) {
   return (
     <>
       <div className="flex h-full flex-col rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <h2 className="mb-1 flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <BookIcon className="h-4 w-4 text-violet-500" />
           Wireless Topics
         </h2>
         <p className="mb-3 text-xs text-slate-500">
@@ -45,19 +72,24 @@ export function WirelessTopicsPanel({ causes }: { causes: TaxonomyCause[] }) {
         </p>
 
         <div className="mb-3 flex flex-wrap gap-1">
-          {(['all', ...BAND_ORDER] as const).map((b) => (
-            <button
-              key={b}
-              onClick={() => setFilterBand(b)}
-              className={`rounded-md px-2 py-1 text-xs font-medium ${
-                filterBand === b
-                  ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
-                  : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
-              }`}
-            >
-              {b === 'all' ? 'All bands' : b}
-            </button>
-          ))}
+          {(['all', ...BAND_ORDER] as const).map((b) => {
+            const active = filterBand === b
+            const style = b === 'all' ? undefined : BAND_STYLE[b]
+            return (
+              <button
+                key={b}
+                onClick={() => setFilterBand(b)}
+                className={`flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium ${
+                  active
+                    ? `${b === 'all' ? ALL_BANDS_ACTIVE_BG : style!.activeBg} text-white shadow-sm`
+                    : `${style?.text ?? 'text-slate-500'} hover:bg-slate-100 dark:hover:bg-slate-800`
+                }`}
+              >
+                {style && <span className={`h-1.5 w-1.5 rounded-full ${active ? 'bg-white' : style.dot}`} />}
+                {b === 'all' ? 'All bands' : b}
+              </button>
+            )
+          })}
         </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto">
@@ -66,7 +98,10 @@ export function WirelessTopicsPanel({ causes }: { causes: TaxonomyCause[] }) {
             if (items.length === 0) return null
             return (
               <div key={band}>
-                <h3 className="mb-1 text-xs font-semibold text-slate-400">{band}</h3>
+                <h3 className="mb-1 flex items-center gap-1.5 text-xs font-semibold">
+                  <span className={`h-2 w-2 rounded-full ${BAND_STYLE[band].dot}`} />
+                  <span className={BAND_STYLE[band].text}>{band}</span>
+                </h3>
                 <ul className="space-y-1">
                   {items.map((c) => (
                     <li key={c.id}>
@@ -74,7 +109,7 @@ export function WirelessTopicsPanel({ causes }: { causes: TaxonomyCause[] }) {
                         onClick={() => setSelectedId(c.id)}
                         className={`w-full rounded-md px-3 py-2 text-left text-xs ${
                           c.id === selectedId
-                            ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900'
+                            ? `${BAND_STYLE[band].activeBg} text-white shadow-sm`
                             : 'hover:bg-slate-100 dark:hover:bg-slate-800'
                         }`}
                       >
@@ -123,9 +158,17 @@ export function WirelessTopicsPanel({ causes }: { causes: TaxonomyCause[] }) {
                   </span>
                 )}
               </div>
-              <p className="mt-0.5 font-mono text-xs text-slate-400">
-                {selected.id} · {selected.bands.join(', ')}
-              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <span className="font-mono text-xs text-slate-400">{selected.id}</span>
+                {selected.bands.map((b) => (
+                  <span
+                    key={b}
+                    className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${BAND_STYLE[b]?.chip ?? ''}`}
+                  >
+                    {b}
+                  </span>
+                ))}
+              </div>
             </div>
 
             {selected.description && (

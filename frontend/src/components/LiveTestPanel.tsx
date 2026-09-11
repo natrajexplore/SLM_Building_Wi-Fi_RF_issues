@@ -3,6 +3,7 @@ import { api, ApiError } from '../api'
 import type { LiveSample } from '../types'
 import { DiagnosisView } from './DiagnosisView'
 import { ExplanationPanel } from './ExplanationPanel'
+import { AntennaIcon } from './Icons'
 
 // How often to poll GET /live/feed. The feed is push-fed by a probe (e.g.
 // hardware/esp32_rf_probe with BACKEND_URL -> /live/ingest); this is not a
@@ -96,7 +97,8 @@ export function LiveTestPanel({ causeName }: { causeName: (id: string) => string
     <>
       <div className="flex h-full flex-col rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <AntennaIcon className="h-4 w-4 text-teal-500" />
             2.4GHz live feed
           </h2>
           <label className="flex items-center gap-2 text-xs text-slate-500">

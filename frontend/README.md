@@ -1,4 +1,4 @@
-# frontend — Multi Use Tool for Wi-Fi
+# frontend — Multi use Wi-Fi Tool
 
 React + Vite + Tailwind v4. Single page: paste a canonical RF snapshot, run
 `/diagnose`, read the evidence chain + retrieved regulatory citations, then run
