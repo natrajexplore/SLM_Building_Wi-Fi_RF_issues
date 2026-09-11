@@ -10,17 +10,36 @@ import json
 import random
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 from fastapi.testclient import TestClient
 
 from backend import live_buffer
 from backend.config import get_settings
 from backend.deps import ask_backend_dep, backend_dep, query_store_dep, retriever_dep, settings_dep
-from backend.inference import BackendError, ReferenceBackend, StubBackend, build_backend
+from backend.inference import BackendError, OllamaBackend, ReferenceBackend, StubBackend, build_backend
 from backend.main import app
 from backend.query_store import QueryStoreError
 from data import generate, scenarios
+
+
+def _parse_sse(text: str) -> list[tuple[str, dict]]:
+    """Minimal SSE parser mirroring frontend/src/api.ts's askStream framing."""
+    events: list[tuple[str, dict]] = []
+    for raw in text.split("\n\n"):
+        raw = raw.strip()
+        if not raw:
+            continue
+        event, data = "message", None
+        for line in raw.split("\n"):
+            if line.startswith("event:"):
+                event = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                data = json.loads(line[len("data:"):].strip())
+        events.append((event, data))
+    return events
 
 CSV_MAPPING = {
     "spectrum_capable": False,
@@ -477,6 +496,20 @@ class Ask(BackendTestCase):
         self.assertIn("First answer.", second_call_prompt)
         self.assertIn("and what about ACI?", second_call_prompt)
 
+    def test_ask_history_capped_to_recent_turns(self):
+        from backend.routers.ask import _HISTORY_TURNS
+
+        conv_id = None
+        for i in range(_HISTORY_TURNS + 2):
+            self.stub._responses.append(f"answer {i}")
+            r = self.client.post("/ask", json={"message": f"question {i}", "conversation_id": conv_id})
+            conv_id = r.json()["conversation_id"]
+        last_prompt = self.stub.calls[-1]["user"]
+        self.assertNotIn("question 0", last_prompt)  # aged out of the capped history
+        self.assertIn(f"question {_HISTORY_TURNS + 1}", last_prompt)  # the new message itself
+        # Nothing is lost from the store/sidebar, only from what's resent to the model.
+        self.assertEqual(len(self.store.messages[conv_id]), 2 * (_HISTORY_TURNS + 2))
+
     def test_ask_runs_at_explanation_band_default_not_diagnosis_temperature(self):
         self.stub._responses.append("...")
         r = self.client.post("/ask", json={"message": "what is CCI?"})
@@ -575,6 +608,124 @@ class Ask(BackendTestCase):
         self.store.fail = True
         r = self.client.get("/ask/conversations/1")
         self.assertEqual(r.status_code, 503)
+
+
+class AskStream(BackendTestCase):
+    def test_ask_stream_emits_chunks_then_done_with_full_answer(self):
+        self.stub._responses.append("Use the 1/6/11 channel plan.")
+        r = self.client.post("/ask/stream", json={"message": "why avoid overlap?"})
+        self.assertEqual(r.status_code, 200, r.text)
+
+        events = _parse_sse(r.text)
+        self.assertGreaterEqual(len(events), 2)  # at least one chunk + done
+        self.assertTrue(all(e == "chunk" for e, _ in events[:-1]))
+        self.assertEqual(events[-1][0], "done")
+
+        chunk_text = "".join(d["text"] for _, d in events[:-1])
+        self.assertEqual(chunk_text.strip(), "Use the 1/6/11 channel plan.")
+
+        done = events[-1][1]
+        self.assertEqual(done["answer"], "Use the 1/6/11 channel plan.")
+        self.assertTrue(done["stored"])
+        self.assertIsNotNone(done["conversation_id"])
+        self.assertIsNotNone(done["message_id"])
+
+        stored = self.store.messages[done["conversation_id"]]
+        self.assertEqual(stored[0]["role"], "user")
+        self.assertEqual(stored[1]["role"], "assistant")
+        self.assertEqual(stored[1]["content"], "Use the 1/6/11 channel plan.")
+
+    def test_ask_stream_saves_user_message_before_generation_like_ask_does(self):
+        r = self.client.post("/ask/stream", json={"message": "why avoid overlap?"})
+        events = _parse_sse(r.text)
+        conv_id = events[-1][1]["conversation_id"]
+        self.assertEqual(len(self.store.messages[conv_id]), 2)  # user + assistant, both saved
+
+    def test_ask_stream_followup_includes_prior_turn_as_context(self):
+        self.stub._responses.extend(["First answer.", "Second answer."])
+        first_events = _parse_sse(
+            self.client.post("/ask/stream", json={"message": "what is CCI?"}).text
+        )
+        conv_id = first_events[-1][1]["conversation_id"]
+        self.client.post(
+            "/ask/stream", json={"message": "and what about ACI?", "conversation_id": conv_id}
+        )
+        second_call_prompt = self.stub.calls[1]["user"]
+        self.assertIn("what is CCI?", second_call_prompt)
+        self.assertIn("First answer.", second_call_prompt)
+        self.assertIn("and what about ACI?", second_call_prompt)
+
+    def test_ask_stream_error_event_on_backend_failure(self):
+        class FailingBackend:
+            def stream(self, system, user, *, temperature):
+                raise BackendError("ollama down")
+
+        app.dependency_overrides[ask_backend_dep] = lambda: FailingBackend()
+        r = self.client.post("/ask/stream", json={"message": "q"})
+        self.assertEqual(r.status_code, 200, r.text)  # the SSE response itself always starts 200
+        events = _parse_sse(r.text)
+        self.assertEqual(events[-1], ("error", {"message": "ollama down"}))
+        # Nothing gets saved as the assistant's reply when the backend failed.
+        conv_id = next(iter(self.store.conversations))
+        self.assertEqual(len(self.store.messages[conv_id]), 1)  # user message only
+
+    def test_ask_stream_degrades_gracefully_when_store_unavailable(self):
+        self.store.fail = True
+        self.stub._responses.append("An answer that could not be saved.")
+        r = self.client.post("/ask/stream", json={"message": "q"})
+        events = _parse_sse(r.text)
+        done = events[-1][1]
+        self.assertEqual(done["answer"], "An answer that could not be saved.")
+        self.assertFalse(done["stored"])
+        self.assertIsNone(done["message_id"])
+        self.assertIn("unavailable", done["store_error"])
+
+    def test_ask_stream_runs_at_explanation_band_temperature(self):
+        self.stub._responses.append("...")
+        r = self.client.post("/ask/stream", json={"message": "q"})
+        done = _parse_sse(r.text)[-1][1]
+        self.assertEqual(done["temperature_used"], 0.8)
+        self.assertEqual(self.stub.calls[0]["temperature"], 0.8)
+
+
+class OllamaStreaming(unittest.TestCase):
+    """Unit tests for OllamaBackend.stream()'s NDJSON parsing -- no real Ollama needed."""
+
+    def _fake_response(self, lines: list[bytes]):
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def __iter__(self):
+                return iter(lines)
+
+        return FakeResponse()
+
+    def test_stream_yields_content_deltas_and_stops_at_done(self):
+        lines = [
+            json.dumps({"message": {"content": "Hello"}, "done": False}).encode(),
+            json.dumps({"message": {"content": " world"}, "done": False}).encode(),
+            json.dumps({"message": {"content": ""}, "done": True}).encode(),
+        ]
+        backend = OllamaBackend("qwen2.5:7b-instruct", "http://localhost:11434", 5.0)
+        with mock.patch(
+            "backend.inference.urllib.request.urlopen",
+            return_value=self._fake_response(lines),
+        ):
+            chunks = list(backend.stream("sys", "user", temperature=0.8))
+        self.assertEqual(chunks, ["Hello", " world"])
+
+    def test_stream_raises_backend_error_on_connection_failure(self):
+        backend = OllamaBackend("qwen2.5:7b-instruct", "http://localhost:11434", 5.0)
+        with mock.patch(
+            "backend.inference.urllib.request.urlopen",
+            side_effect=urllib.error.URLError("connection refused"),
+        ):
+            with self.assertRaises(BackendError):
+                list(backend.stream("sys", "user", temperature=0.8))
 
 
 if __name__ == "__main__":

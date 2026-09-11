@@ -13,7 +13,7 @@ import urllib.error
 import urllib.request
 from functools import lru_cache
 from pathlib import Path
-from typing import Protocol
+from typing import Iterator, Protocol
 
 from data.prompts import ASK_SYSTEM, DIAGNOSIS_SYSTEM, EXPLANATION_SYSTEM
 from data.taxonomy_loader import all_cause_ids, cause as get_cause
@@ -60,6 +60,35 @@ class OllamaBackend:
             raise BackendError(f"Ollama at {self.host} (model {self.model!r}): {exc}") from exc
         return (payload.get("message") or {}).get("content", "")
 
+    def stream(self, system: str, user: str, *, temperature: float) -> Iterator[str]:
+        """Yields content deltas as Ollama's NDJSON stream produces them —
+        used by /ask/stream so an answer appears as it's generated instead of
+        after the full 20-80s+ round trip. Not used by /diagnose or /explain,
+        which need the complete text before they can validate/format it."""
+        body = json.dumps({
+            "model": self.model, "stream": True,
+            "options": {"temperature": temperature},
+            "messages": [{"role": "system", "content": system},
+                         {"role": "user", "content": user}],
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.host}/api/chat", data=body, headers={"Content-Type": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                for line in resp:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    content = (chunk.get("message") or {}).get("content", "")
+                    if content:
+                        yield content
+                    if chunk.get("done"):
+                        break
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            raise BackendError(f"Ollama at {self.host} (model {self.model!r}): {exc}") from exc
+
 
 class StubBackend:
     """Returns queued canned responses. Tests set these; never used in serving."""
@@ -71,6 +100,9 @@ class StubBackend:
     def generate(self, system: str, user: str, *, temperature: float) -> str:
         self.calls.append({"system": system, "user": user, "temperature": temperature})
         return self._responses.pop(0) if self._responses else "{}"
+
+    def stream(self, system: str, user: str, *, temperature: float) -> Iterator[str]:
+        yield self.generate(system, user, temperature=temperature)
 
 
 class ReferenceBackend:
@@ -185,6 +217,14 @@ class AdapterBackend:
                 pad_token_id=self.tokenizer.eos_token_id,
             )
         return self.tokenizer.decode(out[0][inputs.shape[1]:], skip_special_tokens=True)
+
+    def stream(self, system: str, user: str, *, temperature: float) -> Iterator[str]:
+        # No CUDA GPU is reachable from this dev environment, so this backend
+        # cannot be exercised end-to-end yet -- real token-by-token streaming
+        # (transformers.TextIteratorStreamer) is speculative work for a path
+        # that can't currently run. Single-chunk keeps /ask/stream correct
+        # (same generate() call) without building that ahead of the hardware.
+        yield self.generate(system, user, temperature=temperature)
 
 
 def build_backend(cfg: Settings) -> ModelBackend:
@@ -353,18 +393,16 @@ def run_explanation(snapshot: dict, diagnosis: dict, temperature: float,
     return backend.generate(EXPLANATION_SYSTEM, user, temperature=temperature).strip()
 
 
-def run_ask(history: list[dict], temperature: float, backend: ModelBackend, cfg: Settings,
-            retriever=None) -> tuple[str, list[Citation]]:
-    """Multi-turn free-text chat -> grounded answer, for the Submit/Ask tab.
+def _build_ask_prompt(history: list[dict], cfg: Settings, retriever=None) -> tuple[str, list[Citation]]:
+    """Shared by run_ask and run_ask_stream so the two paths can never drift
+    apart on what the model actually sees.
 
     `history` is prior turns oldest-first, `{"role": "user"|"assistant",
     "content": str}`, ending with the new user message being answered. No
     canonical snapshot: retrieval is grounded only on the latest question,
     not the whole transcript (a follow-up like "and for 6 GHz?" would
     otherwise retrieve nothing useful on its own, but re-retrieving on every
-    prior turn too would dilute results with old topics). Runs at the
-    explanation-band temperature (this is prose, not a structured
-    assertion), never the diagnosis temperature.
+    prior turn too would dilute results with old topics).
     """
     query = history[-1]["content"]
     citations = retrieve_for_text(query, cfg, retriever)
@@ -378,6 +416,34 @@ def run_ask(history: list[dict], temperature: float, backend: ModelBackend, cfg:
         )
         user += f"\nConversation so far:\n{transcript}\n"
     user += f"\nNew question:\n{query}\n"
+    return user, citations
 
+
+def run_ask(history: list[dict], temperature: float, backend: ModelBackend, cfg: Settings,
+            retriever=None) -> tuple[str, list[Citation]]:
+    """Multi-turn free-text chat -> grounded answer, for the Submit/Ask tab.
+
+    Runs at the explanation-band temperature (this is prose, not a structured
+    assertion), never the diagnosis temperature.
+    """
+    user, citations = _build_ask_prompt(history, cfg, retriever)
     answer = backend.generate(ASK_SYSTEM, user, temperature=temperature).strip()
     return answer, citations
+
+
+def run_ask_stream(history: list[dict], temperature: float, backend, cfg: Settings, retriever=None):
+    """Same as run_ask, but yields the answer as it's generated for /ask/stream.
+
+    Yields `{"type": "chunk", "text": str}` for each delta, then exactly one
+    final `{"type": "done", "answer": str, "citations": list[Citation]}` with
+    the full (stripped) answer. `backend` must implement `.stream(...)` —
+    every backend `build_ask_backend` can select (ollama/adapter/stub) does;
+    ReferenceBackend is already rejected there, so this never sees one that
+    doesn't.
+    """
+    user, citations = _build_ask_prompt(history, cfg, retriever)
+    pieces: list[str] = []
+    for piece in backend.stream(ASK_SYSTEM, user, temperature=temperature):
+        pieces.append(piece)
+        yield {"type": "chunk", "text": piece}
+    yield {"type": "done", "answer": "".join(pieces).strip(), "citations": citations}
