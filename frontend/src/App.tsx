@@ -26,7 +26,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <header className="border-b border-slate-200 px-6 py-3 dark:border-slate-800">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <h1 className="text-lg font-semibold">RF Root-Cause SLM</h1>
+          <h1 className="text-lg font-semibold">Multi Use Tool for Wi-Fi</h1>
           <HealthPill health={health} />
         </div>
       </header>
