@@ -294,7 +294,7 @@ What actually exists:
   neither does `/ask` — it always runs at the explanation default
   server-side, with no second knob in the UI. Dev server proxies
   `/diagnose` `/explain` `/ingest` `/live` `/retrieve` `/ask` `/taxonomy`
-  `/health` to `:8000` (`vite.config.ts`). `npm run build` type-checks and
+  `/health` to `:8090` (`vite.config.ts`). `npm run build` type-checks and
   bundles. `node_modules/` and `dist/` are git-ignored by the scaffold's
   `.gitignore`.
 
@@ -319,10 +319,14 @@ What actually exists:
 - Build the RAG index (phase 6): `python -m rag.ingest` (needs Ollama with
   `nomic-embed-text` pulled; `--embedder hash` for an offline test index).
   Query it: `python -m rag.retriever "6 GHz LPI EIRP limit" --band 6GHz`.
-- Run the backend (phase 7): `uvicorn backend.main:app --reload`. That binds
+- Run the backend (phase 7): `uvicorn backend.main:app --reload --port 8090`.
+  Port 8090, not the uvicorn default 8000 — `vite.config.ts`'s dev proxy
+  targets `:8090` because `:8000` collides with another project's backend on
+  this dev machine; the plain default-port command starts fine on its own
+  but leaves the frontend proxy talking to nothing (502s). That binds
   `127.0.0.1` only — fine for the frontend on the same machine, but invisible
   to a real `hardware/esp32_rf_probe` board on the LAN. For real-hardware
-  testing use `uvicorn backend.main:app --host 0.0.0.0 --port 8000` (allow it
+  testing use `uvicorn backend.main:app --host 0.0.0.0 --port 8090` (allow it
   through Windows Firewall on Private networks if prompted), and in the
   board's own setup portal (see the `hardware/esp32_rf_probe/wifi_portal.h`
   bullet above) set the backend host to that machine's actual LAN IP
@@ -359,7 +363,7 @@ What actually exists:
   manually each session; `/health`'s `query_store_connected` shows whether
   it's currently reachable.
 - Run the frontend (phase 8): `cd frontend && npm run dev` (proxies to the
-  backend on `:8000`, see `vite.config.ts`); `npm run build` type-checks and
+  backend on `:8090`, see `vite.config.ts`); `npm run build` type-checks and
   bundles for production.
 - No lint step.
 
