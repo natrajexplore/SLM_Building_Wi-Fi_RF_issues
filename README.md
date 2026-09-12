@@ -1,5 +1,12 @@
 # Mutli use Wi-Fi Tools - SLM Building
 
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](requirements.txt)
+[![Tests](https://img.shields.io/badge/tests-stdlib%20unittest-brightgreen)](tests/)
+[![Backend](https://img.shields.io/badge/backend-FastAPI-009688)](backend/)
+[![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Vite%20%2B%20Tailwind%20v4-646cff)](frontend/)
+[![Student model](https://img.shields.io/badge/student-Qwen2.5--1.5B--Instruct-purple)](training/)
+[![License](https://img.shields.io/badge/license-TBD-lightgrey)](#license)
+
 A small language model that diagnoses wireless RF problems across **2.4 GHz, 5 GHz and 6 GHz** and returns a root cause with a supporting evidence chain, ranked alternatives, and remediation intent.
 
 **Vendor neutral by design.** The model never sees vendor-native output. Every data source — a Cisco Catalyst 9800 capture bundle, an ESP32 probe reading, a CSV export — is normalized into one canonical schema by an adapter before it reaches the model. Adding a vendor means writing an adapter, never retraining.
@@ -21,6 +28,11 @@ A small language model that diagnoses wireless RF problems across **2.4 GHz, 5 G
 - [Evaluation](#evaluation)
 - [Project status](#project-status)
 - [Limitations](#limitations)
+- [Known traps](#known-traps)
+- [FAQ](#faq)
+- [Contributing](#contributing)
+- [License](#license)
+- [Author](#author)
 
 ---
 
@@ -301,25 +313,43 @@ Core dependencies are CPU-only. Training deps install separately on the GPU box:
 pip install -r requirements.txt -r requirements-train.txt
 ```
 
+Development-only tooling (regenerating `backend/models.py` from the schema, the ESP32 dev-cert generator) lives in a third file, installed on demand:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
 ### Run the backend
 
-```bash
-uvicorn backend.main:app --reload
-# docs at http://127.0.0.1:8000/docs
-```
-
-For real ESP32 hardware on the LAN, bind all interfaces — `--reload` binds loopback only, which is invisible to the board:
+The app runs on **port 8090**, not uvicorn's default 8000 — the frontend's Vite dev proxy (`frontend/vite.config.ts`) is hardcoded to `:8090`, so this isn't optional:
 
 ```bash
-uvicorn backend.main:app --host 0.0.0.0 --port 8000
+uvicorn backend.main:app --reload --port 8090
+# docs at http://127.0.0.1:8090/docs
 ```
 
-In the board's setup portal, set the backend host to the machine's actual LAN IP (`ipconfig` / `ip addr`), never `localhost` — from the board's perspective that means the board itself. Watch its serial output for `POST <url> -> <code>` to confirm delivery.
+`RF_SLM_BACKEND` defaults to `ollama`; set `reference` for a fast, deterministic, model-free backend that's enough to exercise the frontend end to end (see [Configuration](#configuration)). If the Submit/Ask tab needs to persist conversations, start PostgreSQL first — `GET /health` reports `query_store_connected` either way, and `/ask` degrades gracefully (`stored: false`) rather than failing when it isn't reachable.
+
+For real ESP32 hardware on the LAN, bind all interfaces — `--reload`'s default binds loopback only, which is invisible to the board:
+
+```bash
+uvicorn backend.main:app --host 0.0.0.0 --port 8090
+```
+
+In the board's setup portal, set the backend host to the machine's actual LAN IP (`ipconfig` / `ip addr`), never `localhost` — from the board's perspective that means the board itself. Watch its serial output for `POST <url> -> <code>` to confirm delivery. For the portal's "Encrypt traffic to backend (HTTPS)" toggle, generate a self-signed dev certificate first and pass it to uvicorn:
+
+```bash
+pip install -r requirements-dev.txt
+python hardware/esp32_rf_probe/generate_dev_cert.py --host <LAN IP>
+uvicorn backend.main:app --host 0.0.0.0 --port 8090 \
+  --ssl-keyfile .local/certs/key.pem --ssl-certfile .local/certs/cert.pem
+```
 
 ### Run the frontend
 
 ```bash
 cd frontend && npm install && npm run dev
+# served at http://localhost:5190, proxying API calls to :8090
 ```
 
 A colorful, icon-driven UI ("Multi use Wi-Fi Tool" in the header) over three tabs, in display order:
@@ -460,9 +490,29 @@ Encoded in the taxonomy discriminators, and worth stating plainly:
 
 ---
 
+## FAQ
+
+**Do I need a GPU to try this?** No. Schema validation, adapters, synthetic data generation, the RAG index, the FastAPI backend and the React frontend all run on CPU. Set `RF_SLM_BACKEND=reference` for deterministic, model-free `/diagnose` responses, or `RF_SLM_BACKEND=ollama` to serve a real (untuned) model locally. A GPU is only required for the actual QLoRA fine-tune (phase 5).
+
+**Do I need an ESP32 board to see the Live Test tab work?** No. Click **Load demo samples** — it replays six real, labelled captures from `hardware/sample_capture.jsonl` through the identical adapter → diagnose pipeline. Demo rows carry a `DEMO` badge so they're never mistaken for hardware readings.
+
+**Can I point this at my own controller?** Only via an adapter that produces `schema/canonical_rf.schema.json`. `cisco_c9800.py` covers Catalyst 9800; `generic_csv.py` / `generic_json.py` cover anything else you can export to a flat CSV row or a mapped JSON document (see `adapters/generic_*.example.map.yaml`). Aruba Central and Mist adapters are on the roadmap but not started.
+
+**Why does the model sometimes say "I don't know"?** Because that's the correct answer when the snapshot is missing the evidence a cause requires. Abstention (`cause_id: null` + populated `data_gaps`) is a first-class, measured behavior here, not a fallback for a broken prompt.
+
+**Will this ever call out to a hosted LLM API in production?** No hosted API is wired into the serving path today — `OllamaBackend` and the QLoRA `AdapterBackend` both run locally. The only external calls are outbound HTTP from your own adapters/ingest sources, which you control.
+
+---
+
 ## Contributing
 
-The highest-value contributions are well-documented RF case studies with confirmed root causes and full telemetry, and new vendor adapters. Please anonymise SSIDs, BSSIDs, client MACs and site identifiers before submitting; the adapter layer will reject MAC-shaped values regardless.
+The highest-value contributions are well-documented RF case studies with confirmed root causes and full telemetry, and new vendor adapters (Aruba Central and Mist are next up — see [Project status](#project-status)). Please anonymise SSIDs, BSSIDs, client MACs and site identifiers before submitting; the adapter layer will reject MAC-shaped values regardless.
+
+Before opening a PR:
+
+```bash
+python -m unittest discover -s tests   # stdlib unittest, no pytest, no GPU needed
+```
 
 ## License
 
