@@ -1,4 +1,4 @@
-# RF Root Cause SLM
+# Mutli use Wi-Fi Tools - SLM Building
 
 A small language model that diagnoses wireless RF problems across **2.4 GHz, 5 GHz and 6 GHz** and returns a root cause with a supporting evidence chain, ranked alternatives, and remediation intent.
 
