@@ -330,6 +330,8 @@ uvicorn backend.main:app --reload --port 8090
 
 `RF_SLM_BACKEND` defaults to `ollama`; set `reference` for a fast, deterministic, model-free backend that's enough to exercise the frontend end to end (see [Configuration](#configuration)). If the Submit/Ask tab needs to persist conversations, start PostgreSQL first — `GET /health` reports `query_store_connected` either way, and `/ask` degrades gracefully (`stored: false`) rather than failing when it isn't reachable.
 
+On Windows, `scripts/start-backend.ps1` does both in one step: it starts the portable PostgreSQL instance at `.local/postgres/` if it isn't already running (see [Configuration](#configuration)), then launches uvicorn on `:8090`. Pass `-Lan` to bind `0.0.0.0` for real ESP32 hardware instead of `127.0.0.1`.
+
 For real ESP32 hardware on the LAN, bind all interfaces — `--reload`'s default binds loopback only, which is invisible to the board:
 
 ```bash
