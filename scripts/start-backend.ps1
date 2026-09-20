@@ -35,4 +35,7 @@ if (Test-Path $pgCtl) {
 
 Set-Location $repoRoot
 $bindHost = if ($Lan) { "0.0.0.0" } else { "127.0.0.1" }
-uvicorn backend.main:app --reload --host $bindHost --port 8090
+# Prefer the project venv's uvicorn so this works without activating it first.
+$venvUvicorn = Join-Path $repoRoot ".venv/Scripts/uvicorn.exe"
+$uvicorn = if (Test-Path $venvUvicorn) { $venvUvicorn } else { "uvicorn" }
+& $uvicorn backend.main:app --reload --host $bindHost --port 8090
