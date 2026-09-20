@@ -15,13 +15,19 @@ $pgLog = Join-Path $repoRoot ".local/postgres/logs.log"
 
 if (Test-Path $pgCtl) {
     & $pgCtl -D $pgData status | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    # pg_ctl status: 0 = running, 3 = not running, 4 = data dir missing/invalid.
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "PostgreSQL already running."
+    } elseif ($LASTEXITCODE -eq 3) {
         Write-Host "Starting PostgreSQL..."
         & $pgCtl -D $pgData -l $pgLog `
             -o "-c shared_buffers=32MB -c max_connections=20 -c listen_addresses=127.0.0.1 -p 5432" `
             start
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "PostgreSQL failed to start (see $pgLog). Continuing - Submit/Ask will run with stored: false."
+        }
     } else {
-        Write-Host "PostgreSQL already running."
+        Write-Warning "pg_ctl status exited $LASTEXITCODE - data dir at $pgData missing or invalid (run initdb?). Skipping PostgreSQL - Submit/Ask will run with stored: false."
     }
 } else {
     Write-Host "No portable PostgreSQL at $pgCtl - skipping (Submit/Ask will run with stored: false)."
