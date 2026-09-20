@@ -50,6 +50,19 @@ class ConfigTests(unittest.TestCase):
             train.read_chat_jsonl(path)
 
 
+class FindCheckpointTests(unittest.TestCase):
+    def test_none_when_dir_missing_or_empty(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIsNone(train.find_checkpoint(Path(d) / "nope"))
+            self.assertIsNone(train.find_checkpoint(d))
+
+    def test_picks_highest_step_numerically(self):
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("checkpoint-50", "checkpoint-150", "checkpoint-100", "checkpoint-final", "other"):
+                (Path(d) / name).mkdir()
+            self.assertEqual(train.find_checkpoint(d).name, "checkpoint-150")
+
+
 class ExtractJsonTests(unittest.TestCase):
     def test_pulls_object_from_surrounding_prose(self):
         raw = 'Here is the diagnosis:\n{"cause_id": "RF-24-001", "confidence": "high"}\nThanks.'

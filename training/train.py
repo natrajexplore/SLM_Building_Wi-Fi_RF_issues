@@ -2,6 +2,7 @@
 
     python -m training.train --dry-run                 # no GPU, no heavy deps
     python -m training.train --config training/qlora_config.yaml   # on the GPU box
+    python -m training.train --config ... --resume     # continue from the last checkpoint
 
 `--dry-run` loads the YAML, checks the dataset files parse as chat records,
 renders the first example through the tokenizer's chat template (if transformers
@@ -90,7 +91,13 @@ def dry_run(cfg: dict) -> int:
     return 0
 
 
-def train(cfg: dict) -> int:
+def find_checkpoint(output_dir: str | Path) -> Path | None:
+    """Newest `checkpoint-<step>` dir under output_dir, or None."""
+    found = [p for p in Path(output_dir).glob("checkpoint-*") if p.is_dir() and p.name.split("-")[-1].isdigit()]
+    return max(found, key=lambda p: int(p.name.split("-")[-1]), default=None)
+
+
+def train(cfg: dict, resume: bool = False) -> int:
     try:
         import torch
         from datasets import Dataset
@@ -177,7 +184,10 @@ def train(cfg: dict) -> int:
         peft_config=lora,
         processing_class=tokenizer,
     )
-    trainer.train()
+    ckpt = find_checkpoint(t["output_dir"]) if resume else None
+    if resume:
+        print(f"resuming from {ckpt}" if ckpt else "--resume: no checkpoint found, starting from step 0")
+    trainer.train(resume_from_checkpoint=str(ckpt) if ckpt else None)
     trainer.save_model(t["output_dir"])
     tokenizer.save_pretrained(t["output_dir"])
     print(f"adapter saved to {t['output_dir']}")
@@ -188,10 +198,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", type=Path, default=REPO / "training" / "qlora_config.yaml")
     ap.add_argument("--dry-run", action="store_true", help="validate config + data, no GPU")
+    ap.add_argument("--resume", action="store_true", help="continue from the newest checkpoint in output_dir, if any")
     args = ap.parse_args(argv)
 
     cfg = load_config(args.config)
-    return dry_run(cfg) if args.dry_run else train(cfg)
+    return dry_run(cfg) if args.dry_run else train(cfg, resume=args.resume)
 
 
 if __name__ == "__main__":

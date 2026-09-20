@@ -397,7 +397,7 @@ No local GPU? `training/colab_t4.ipynb` runs the whole fine-tune on a free Colab
 3. Checkpoints are written to Google Drive (`training/out` is symlinked there), so a session disconnect doesn't lose the adapter.
 4. The last cell downloads the adapter. Unzip it to `training/out/` and run the backend with `RF_SLM_BACKEND=adapter`.
 
-Expect roughly 220 optimizer steps over a few hours. `train.py` does not resume from a checkpoint yet, so a disconnect mid-run means restarting from step 0 (the saved checkpoints remain on Drive).
+Expect roughly 220 optimizer steps over a few hours. After a disconnect, re-run the train cell: it passes `--resume`, which continues from the newest checkpoint saved on Drive (saved every 50 steps) and does nothing on a fresh run.
 
 ---
 
