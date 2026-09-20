@@ -1,4 +1,4 @@
-# Mutli use Wi-Fi Tools - SLM Building
+# Multi-Use Wi-Fi Tools — SLM Building
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](requirements.txt)
 [![Tests](https://img.shields.io/badge/tests-stdlib%20unittest-brightgreen)](tests/)
@@ -197,7 +197,8 @@ Vendor-neutral, via the adapter layer: controller-based, cloud-managed and stand
 | Schema, adapters, data generation, RAG, backend, tests | CPU only — no GPU, no CUDA toolchain |
 | QLoRA fine-tune (16 GB preset) | Single CUDA GPU, 16 GB (T4-class or better) |
 | QLoRA fine-tune (8 GB preset) | 8 GB CUDA GPU — `qlora_config.8gb.yaml`, batch 1, seq 1536, LoRA r=8, ~6–7 GB peak |
-| Turing cards (T4, RTX 20xx) | Additionally `bf16: false`, `bnb_4bit_compute_dtype: float16` |
+| Turing cards (T4, RTX 20xx) | Additionally `bf16: false`, `bnb_4bit_compute_dtype: float16` — preset ready as `qlora_config.t4.yaml` |
+| No local GPU | Free Colab T4 via `training/colab_t4.ipynb` (see [Train on a Colab T4](#train-on-a-colab-t4)) |
 | Serving | CPU inference works; latency scales with model size |
 
 Training dependencies live in `requirements-train.txt`, deliberately separate — the core repo must stay installable without a CUDA toolchain.
@@ -268,6 +269,8 @@ Client and BSSID identifiers are pseudonymised inside `Adapter.to_canonical`, en
 ├── training/
 │   ├── qlora_config.yaml             # Qwen2.5-1.5B QLoRA 4-bit (16 GB / T4)
 │   ├── qlora_config.8gb.yaml         # low-VRAM preset
+│   ├── qlora_config.t4.yaml          # Colab T4 preset (fp16, no bf16)
+│   ├── colab_t4.ipynb                # end-to-end Colab T4 training run
 │   ├── train.py                      # SFT loop; --dry-run needs no GPU
 │   └── evaluate.py                   # top-1/top-3, grounding, abstention, hallucination
 ├── rag/
@@ -285,6 +288,8 @@ Client and BSSID identifiers are pseudonymised inside `Adapter.to_canonical`, en
 │   └── src/components/{AskPanel,LiveTestPanel,WirelessTopicsPanel,
 │                       DiagnosisView,EvidenceChain,ExplanationPanel,
 │                       CitationList,ConfidenceBadge,Section}.tsx
+├── scripts/
+│   └── start-backend.ps1             # Windows: start portable PostgreSQL, then uvicorn
 ├── hardware/
 │   ├── esp32_rf_probe/               # firmware, setup portal, dev cert generator
 │   ├── read_probe.py                 # serial/replay → ingest → diagnose
@@ -330,7 +335,7 @@ uvicorn backend.main:app --reload --port 8090
 
 `RF_SLM_BACKEND` defaults to `ollama`; set `reference` for a fast, deterministic, model-free backend that's enough to exercise the frontend end to end (see [Configuration](#configuration)). If the Submit/Ask tab needs to persist conversations, start PostgreSQL first — `GET /health` reports `query_store_connected` either way, and `/ask` degrades gracefully (`stored: false`) rather than failing when it isn't reachable.
 
-On Windows, `scripts/start-backend.ps1` does both in one step: it starts the portable PostgreSQL instance at `.local/postgres/` if it isn't already running (see [Configuration](#configuration)), then launches uvicorn on `:8090`. Pass `-Lan` to bind `0.0.0.0` for real ESP32 hardware instead of `127.0.0.1`.
+On Windows, `scripts/start-backend.ps1` does both in one step: it starts the portable PostgreSQL instance at `.local/postgres/` if it isn't already running (see [Configuration](#configuration)), then launches uvicorn on `:8090`. Pass `-Lan` to bind `0.0.0.0` for real ESP32 hardware instead of `127.0.0.1`. If PostgreSQL can't start (port taken, missing or invalid data directory), the script prints a warning and carries on — the backend still runs, with the Ask tab reporting `stored: false`.
 
 For real ESP32 hardware on the LAN, bind all interfaces — `--reload`'s default binds loopback only, which is invisible to the board:
 
@@ -382,6 +387,17 @@ python -m training.train --dry-run                                # validates co
 python -m training.train --config training/qlora_config.8gb.yaml  # real run, needs CUDA
 python -m training.evaluate --responder adapter --model training/out
 ```
+
+### Train on a Colab T4
+
+No local GPU? `training/colab_t4.ipynb` runs the whole fine-tune on a free Colab T4 using `training/qlora_config.t4.yaml` (Qwen2.5-1.5B, 4-bit, fp16, batch 1 × grad-accum 32, seq 1536).
+
+1. Open the notebook in Colab and set **Runtime → T4 GPU**.
+2. Run the cells top to bottom. The generated datasets are git-ignored, so when prompted, upload a zip of `data/train.jsonl` and `data/eval.jsonl`.
+3. Checkpoints are written to Google Drive (`training/out` is symlinked there), so a session disconnect doesn't lose the adapter.
+4. The last cell downloads the adapter. Unzip it to `training/out/` and run the backend with `RF_SLM_BACKEND=adapter`.
+
+Expect roughly 220 optimizer steps over a few hours. `train.py` does not resume from a checkpoint yet, so a disconnect mid-run means restarting from step 0 (the saved checkpoints remain on Drive).
 
 ---
 
@@ -458,7 +474,7 @@ Honest state, phase by phase.
 | 2 | Taxonomy (26 causes, v0.2.0 predicates) | Done |
 | 3 | Adapters — base, normalize, generic CSV/JSON, ESP32, C9800 | Done. C9800 **unvalidated against a real WLC**. Aruba Central and Mist not started. |
 | 4 | Synthetic dataset generator | Done. 2990 examples generated, full audit clean. |
-| 5 | QLoRA fine-tune | **Scaffold done, real run blocked.** No CUDA GPU reachable from the dev environment. `--dry-run` passes, and a real non-quantized LoRA loop was proven end-to-end on CPU (loss 1.87 → 1.05 over 4 steps). 4-bit quantization loads on CPU but hangs during training — genuine CUDA hardware is required. `training/out/` does not exist. |
+| 5 | QLoRA fine-tune | **Scaffold done, real run blocked.** No CUDA GPU reachable from the dev environment. `--dry-run` passes, and a real non-quantized LoRA loop was proven end-to-end on CPU (loss 1.87 → 1.05 over 4 steps). 4-bit quantization loads on CPU but hangs during training — genuine CUDA hardware is required. `training/out/` does not exist. A Colab T4 route is ready (`training/colab_t4.ipynb`) but has not been run yet. |
 | 6 | RAG layer + corpus | Done. 10 fact sheets verified. Still to do: expand coverage; wire retrieval into the diagnosis path so numeric claims always carry a citation. |
 | 7 | FastAPI backend | Done. Still to do: auth and rate limiting before anything is exposed. |
 | 8 | React frontend | Done. Still to do: an ingest UI for CSV/JSON with mapping. |
