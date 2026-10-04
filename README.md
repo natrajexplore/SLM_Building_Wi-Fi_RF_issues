@@ -5,7 +5,7 @@
 [![Backend](https://img.shields.io/badge/backend-FastAPI-009688)](backend/)
 [![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Vite%20%2B%20Tailwind%20v4-646cff)](frontend/)
 [![Student model](https://img.shields.io/badge/student-Qwen2.5--1.5B--Instruct-purple)](training/)
-[![License](https://img.shields.io/badge/license-TBD-lightgrey)](#license)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 A small language model that diagnoses wireless RF problems across **2.4 GHz, 5 GHz and 6 GHz** and returns a root cause with a supporting evidence chain, ranked alternatives, and remediation intent.
 
@@ -534,7 +534,7 @@ python -m unittest discover -s tests   # stdlib unittest, no pytest, no GPU need
 
 ## License
 
-*To be added.*
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Nataraj Angappan.
 
 ## Author
 
