@@ -534,7 +534,10 @@ Do not skip ahead. Each phase gates the next.
    83%→0%. So serve the current `rf-slm` with `RF_SLM_DIAGNOSE_PROMPT=v1`, and
    score it with the v1 subset `.local/data_v1/eval_sub.jsonl`
    (`.local/eval/eval_sub.jsonl` is now v2). Run 2 is blocked on Colab's
-   free GPU quota (hit 2026-11-20), not on code.
+   free GPU quota (hit 2026-11-20), not on code. Baseline note: the untuned
+   qwen2.5:1.5b *needs* Ollama's repeat penalty. With `repeat_penalty 1` it
+   degenerates (parse 3%), so its reference score stays the default-settings
+   run (parse 27%, top-1 0%); compare each model at its own best setting.
 6. **RAG corpus.** Layer built (`rag/`): corpus format, chunking, Ollama
    embeddings, ingest, retriever with band/domain/topic filters. 10 starter
    fact sheets covering what the taxonomy references, all curated and flipped
