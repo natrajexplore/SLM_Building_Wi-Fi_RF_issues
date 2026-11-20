@@ -55,6 +55,8 @@ class OllamaExportModelfileTests(unittest.TestCase):
         self.assertIn("<|im_start|>{{ .Role }}", mf)
         self.assertIn('PARAMETER stop "<|im_end|>"', mf)
         self.assertIn("PARAMETER num_ctx 8192", mf)
+        self.assertIn("PARAMETER repeat_penalty 1\n", mf)
+        self.assertTrue(mod.modelfile(8192, "./x.gguf").startswith("FROM ./x.gguf\n"))
         # temperature is stage-split and sent per request (CLAUDE.md decision #3)
         self.assertNotIn("temperature", mf)
 

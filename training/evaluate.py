@@ -159,7 +159,10 @@ class OllamaResponder:
         sys_user = [m for m in messages if m["role"] != "assistant"]
         body = json.dumps(
             {"model": self.model, "stream": False,
-             "options": {"temperature": self.temperature, "num_ctx": self.num_ctx, "num_predict": 800},
+             # repeat_penalty 1: Ollama's default >1 penalty taxes the tokens
+             # JSON repeats and biased models toward cause_id null.
+             "options": {"temperature": self.temperature, "num_ctx": self.num_ctx, "num_predict": 800,
+                         "repeat_penalty": 1.0},
              "messages": sys_user}
         ).encode()
         req = urllib.request.Request(

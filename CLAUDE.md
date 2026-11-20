@@ -500,9 +500,21 @@ Do not skip ahead. Each phase gates the next.
    patience 3; `train.py` supports these as optional keys and validates them
    in `--dry-run`). Not yet run on a real T4. Local serving on the MX550 goes
    through `scripts/export_ollama.py` (CPU merge → `ollama create -q q4_K_M`,
-   ~1 GB), not `RF_SLM_BACKEND=adapter` (~3 GB fp16, spills to CPU). The
-   project `.venv` points to a Python from an old Windows user profile and
-   needs recreating.
+   ~1 GB), not `RF_SLM_BACKEND=adapter` (~3 GB fp16, spills to CPU).
+   **First real T4 run done (2026-11-20):** 222 steps, eval_loss 0.70 → 0.125;
+   adapter in `training/out/` (git-ignored), served as Ollama `rf-slm`
+   (Q8_0 GGUF, 1.6 GB). On the 64-example subset (`.local/eval/eval_sub.jsonl`)
+   vs untuned qwen2.5:1.5b: parse 27%→100%, abstention 17%→83%,
+   hallucination 29%→0%, grounding 87%, but **top-1 only 15%** (top-3
+   ambiguous 15%). Low eval_loss is mostly JSON boilerplate; the model finds
+   the right evidence fields but attaches them to a neighbouring cause. Next
+   levers: emit `cause_id` after `evidence` in the targets, more examples per
+   cause, more epochs, then Qwen2.5-3B. Export gotchas found the hard way:
+   Ollama ≥0.40 can't import Qwen2 safetensors (MLX path) → export goes via
+   llama.cpp's `convert_hf_to_gguf.py` (needs `sentencepiece` + the base
+   model's original tokenizer files); and Ollama's default `repeat_penalty`
+   flipped every diagnosis to `cause_id: null` → `rf-slm`'s Modelfile and
+   `training/evaluate.py` set `repeat_penalty 1`.
 6. **RAG corpus.** Layer built (`rag/`): corpus format, chunking, Ollama
    embeddings, ingest, retriever with band/domain/topic filters. 10 starter
    fact sheets covering what the taxonomy references, all curated and flipped

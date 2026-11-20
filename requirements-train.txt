@@ -12,3 +12,4 @@ bitsandbytes>=0.43          # CUDA-only; 4-bit QLoRA
 accelerate>=0.33
 trl>=0.9
 datasets>=2.20
+sentencepiece>=0.2         # scripts/export_ollama.py: llama.cpp GGUF converter imports it
