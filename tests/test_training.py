@@ -16,6 +16,33 @@ _TRAINING = Path(__file__).resolve().parent.parent / "training"
 _CFG = _TRAINING / "qlora_config.yaml"
 
 
+def _has(mod: str) -> bool:
+    import importlib.util
+
+    return importlib.util.find_spec(mod) is not None
+
+
+@unittest.skipUnless(_has("torch") and _has("peft") and _has("transformers"), "needs torch/peft")
+class UpcastTrainableTests(unittest.TestCase):
+    def test_lora_params_become_fp32_and_frozen_base_is_untouched(self):
+        import torch
+        from peft import LoraConfig, get_peft_model
+        from transformers import Qwen2Config, Qwen2ForCausalLM
+
+        cfg = Qwen2Config(vocab_size=64, hidden_size=32, intermediate_size=64, num_hidden_layers=1,
+                          num_attention_heads=4, num_key_value_heads=2)
+        model = get_peft_model(Qwen2ForCausalLM(cfg).to(torch.bfloat16),
+                               LoraConfig(r=4, lora_alpha=8, target_modules=["q_proj", "v_proj"]))
+        # peft creates adapters in fp32, but on a real Colab T4 run they had
+        # been cast to bf16 by the time the trainer stepped -- reproduce that.
+        for p in model.parameters():
+            if p.requires_grad:
+                p.data = p.data.to(torch.bfloat16)
+        self.assertGreater(train.upcast_trainable_to_fp32(model), 0)
+        for p in model.parameters():
+            self.assertEqual(p.dtype, torch.float32 if p.requires_grad else torch.bfloat16)
+
+
 class OllamaExportModelfileTests(unittest.TestCase):
     def test_modelfile_uses_chatml_and_never_pins_temperature(self):
         import importlib.util

@@ -131,6 +131,23 @@ def selection_kwargs(t: dict) -> dict:
     }
 
 
+def upcast_trainable_to_fp32(model) -> int:
+    """Cast the trainable (LoRA) params to fp32; returns how many were cast.
+
+    fp16 AMP's GradScaler refuses to unscale fp16 *or* bf16 gradients -- it
+    needs fp32 master weights. The frozen 4-bit base stays as is; only the
+    small adapter matrices are upcast, so the memory cost is negligible.
+    """
+    import torch
+
+    n = 0
+    for p in model.parameters():
+        if p.requires_grad and p.dtype != torch.float32:
+            p.data = p.data.float()
+            n += 1
+    return n
+
+
 def find_checkpoint(output_dir: str | Path) -> Path | None:
     """Newest `checkpoint-<step>` dir under output_dir, or None."""
     found = [p for p in Path(output_dir).glob("checkpoint-*") if p.is_dir() and p.name.split("-")[-1].isdigit()]
@@ -163,8 +180,14 @@ def train(cfg: dict, resume: bool = False) -> int:
         bnb_4bit_compute_dtype=getattr(torch, q["bnb_4bit_compute_dtype"]),
     )
     tokenizer = AutoTokenizer.from_pretrained(cfg["base_model"])
+    # Load the non-quantized weights in the configured compute dtype. Left to
+    # transformers>=5's default (dtype="auto" -> Qwen2.5's stored bf16), a
+    # Turing run (fp16 AMP) ends up with bf16 params and crashes in the grad
+    # scaler: "_amp_foreach_non_finite_check_and_unscale_cuda" not implemented
+    # for 'BFloat16'.
     model = AutoModelForCausalLM.from_pretrained(
-        cfg["base_model"], quantization_config=bnb, device_map="auto"
+        cfg["base_model"], quantization_config=bnb, device_map="auto",
+        dtype=getattr(torch, q["bnb_4bit_compute_dtype"]),
     )
 
     lora = LoraConfig(
@@ -236,7 +259,9 @@ def train(cfg: dict, resume: bool = False) -> int:
         processing_class=tokenizer,
         callbacks=callbacks,
     )
-    ckpt = find_checkpoint(t["output_dir"]) if resume else None
+    if not t["bf16"]:
+        upcast_trainable_to_fp32(trainer.model)
+    ckpt =find_checkpoint(t["output_dir"]) if resume else None
     if resume:
         print(f"resuming from {ckpt}" if ckpt else "--resume: no checkpoint found, starting from step 0")
     trainer.train(resume_from_checkpoint=str(ckpt) if ckpt else None)
