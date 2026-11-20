@@ -18,15 +18,24 @@
 #     adapter written to output_dir is the lowest-eval-loss checkpoint, not
 #     the last step; 3 epochs on ~2.4k narrow examples can overfit by the end.
 #   - warmup 5% (was 3%): with LoRA r=16 the first steps are a bit noisier.
-#   - max_seq_length stays 1536: the longest example is 1528 tokens, so
+#   - max_seq_length 1600: the longest data-v2 example is 1544 tokens, so
 #     nothing is truncated.
+#
+# Run 2 (data v2, 2026-11-20): run 1 (3 epochs on 2367 examples, eval every
+# 20) reached eval_loss 0.125 but top-1 only 15%. Data v2 puts evidence before
+# cause_id and adds ~3k offline examples (train 5357, ~170 per cause), so:
+#   - 2 epochs (~334 steps, ~3.5 h on a T4): 3 epochs would be ~5.3 h, too
+#     long for a free Colab session, and twice the data per epoch already
+#     gives more steps than run 1's 222.
+#   - eval + save every 40 steps: 8 evals, not 17, which saves ~10 min; early
+#     stopping patience 3 now means 120 steps without improvement.
 
 base_model: "Qwen/Qwen2.5-1.5B-Instruct"
 
 data:
   train_file: "data/train.jsonl"
   eval_file: "data/eval.jsonl"
-  max_seq_length: 1536
+  max_seq_length: 1600
   mask_prompt: true
   eval_max_samples: 200                  # in-training eval subset (seeded)
 
@@ -53,7 +62,7 @@ lora:
 
 training:
   output_dir: "training/out"
-  num_train_epochs: 3
+  num_train_epochs: 2
   per_device_train_batch_size: 2
   per_device_eval_batch_size: 2
   gradient_accumulation_steps: 16        # effective batch 32
@@ -63,13 +72,13 @@ training:
   weight_decay: 0.0
   logging_steps: 10
   eval_strategy: "steps"
-  eval_steps: 20
+  eval_steps: 40
   save_strategy: "steps"
-  save_steps: 20
+  save_steps: 40
   save_total_limit: 3                    # the best checkpoint is always kept on top of this
   load_best_model_at_end: true
   metric_for_best_model: "eval_loss"
-  early_stopping_patience: 3             # stop after 3 evals (60 steps) with no improvement
+  early_stopping_patience: 3             # stop after 3 evals (120 steps) with no improvement
   bf16: false                            # T4 is Turing: no bf16 (train.py then sets fp16)
   gradient_checkpointing: true
   optim: "paged_adamw_8bit"

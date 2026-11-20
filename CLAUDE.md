@@ -515,6 +515,17 @@ Do not skip ahead. Each phase gates the next.
    model's original tokenizer files); and Ollama's default `repeat_penalty`
    flipped every diagnosis to `cause_id: null` → `rf-slm`'s Modelfile and
    `training/evaluate.py` set `repeat_penalty 1`.
+   **Data v2 (run 2):** the assistant turn is now serialized evidence →
+   data_gaps → cause_id → confidence → ranked_alternatives → affected_bands →
+   remediation (`data/generate.py` `LABEL_ORDER`; `DIAGNOSIS_SYSTEM` lists the
+   same order), so the student reasons before it commits to a cause. The v1
+   files were migrated in place with `python -m data.generate --reformat
+   data/train.jsonl data/eval.jsonl` (content unchanged, teacher prose kept;
+   v1 backup in `.local/data_v1/`). Train adds 2990 offline examples
+   (`--no-teacher --seed 11`, zero snapshot overlap with eval): train 5357 /
+   eval 623 (eval unchanged), ~170 per cause. T4 config: 2 epochs (~334 steps),
+   eval/save every 40, `max_seq_length` 1600. Colab writes to
+   `MyDrive/rf-slm-out-v2`, so `--resume` can't pick up run 1's checkpoints.
 6. **RAG corpus.** Layer built (`rag/`): corpus format, chunking, Ollama
    embeddings, ingest, retriever with band/domain/topic filters. 10 starter
    fact sheets covering what the taxonomy references, all curated and flipped

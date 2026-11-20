@@ -2,6 +2,7 @@
 
     python -m data.generate --count 3000 --out data/
     python -m data.generate --count 200 --no-teacher --seed 1      # fast, offline
+    python -m data.generate --reformat data/train.jsonl data/eval.jsonl   # migrate to current format
 
 Long runs checkpoint to data/_generated.jsonl after every accepted example;
 re-running the same command resumes (same --count/--seed) rather than starting
@@ -112,6 +113,42 @@ _REQUIRED_LABEL_FIELDS = (
 )
 _VALID_IDS = set(all_cause_ids())
 
+# Serialization order of the assistant turn = the order the student generates
+# it. Evidence (and data gaps) come BEFORE cause_id so the model commits to a
+# cause only after writing out what the snapshot shows -- with cause_id first
+# (data v1) it had to decide in its first few tokens, and the first T4 run
+# found the right evidence but named a neighbouring cause (top-1 15%).
+LABEL_ORDER = (
+    "evidence", "data_gaps", "cause_id", "confidence", "ranked_alternatives",
+    "affected_bands", "remediation",
+)
+
+
+def order_label(label: dict) -> dict:
+    """Same content, keys in LABEL_ORDER (unknown keys kept, at the end)."""
+    out = {k: label[k] for k in LABEL_ORDER if k in label}
+    out.update({k: v for k, v in label.items() if k not in out})
+    return out
+
+
+def reformat_record(rec: dict) -> dict:
+    """Bring an existing example up to the current prompt + label order.
+
+    Content is untouched (structure is ground truth by construction, the
+    teacher prose is kept), so a dataset migrates without re-running the teacher.
+    """
+    msgs = rec["messages"]
+    label = json.loads(msgs[2]["content"])
+    msgs[0] = {"role": "system", "content": DIAGNOSIS_SYSTEM}
+    msgs[2] = {"role": "assistant", "content": json.dumps(order_label(label), indent=2)}
+    return rec
+
+
+def reformat_file(path: Path) -> int:
+    recs = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    _write_jsonl(path, [reformat_record(r) for r in recs])
+    return len(recs)
+
 
 def _validate(spec: dict, snapshot: dict, label: dict) -> None:
     try:
@@ -183,7 +220,7 @@ def build_example(cid: str, kind: str, teacher: Teacher, rng: random.Random) -> 
         "messages": [
             {"role": "system", "content": DIAGNOSIS_SYSTEM},
             {"role": "user", "content": json.dumps(snapshot, indent=2, sort_keys=True)},
-            {"role": "assistant", "content": json.dumps(label, indent=2)},
+            {"role": "assistant", "content": json.dumps(order_label(label), indent=2)},
         ],
         "meta": {
             "kind": spec["kind"],
@@ -319,7 +356,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--teacher-timeout", type=float, default=240.0,
                     help="per-call Ollama timeout (s); a 7B on CPU needs a generous one")
     ap.add_argument("--no-resume", action="store_true", help="ignore any existing checkpoint")
+    ap.add_argument("--reformat", type=Path, nargs="+", metavar="JSONL",
+                    help="rewrite existing jsonl files in place to the current prompt + label "
+                         "order (no generation, no teacher), then exit")
     args = ap.parse_args(argv)
+
+    if args.reformat:
+        for path in args.reformat:
+            print(f"{path}: {reformat_file(path)} records reformatted")
+        return 0
 
     teacher = Teacher(enabled=not args.no_teacher, timeout=args.teacher_timeout)
     if args.teacher_model:

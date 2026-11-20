@@ -88,6 +88,30 @@ class EndToEndTests(unittest.TestCase):
                     "data_gap_paths": label["data_gaps"],
                 }
                 generate._validate(spec, snap, label)  # raises ExampleRejected on any regression
+                # the student writes evidence before it commits to a cause
+                keys = list(label)
+                self.assertLess(keys.index("evidence"), keys.index("cause_id"))
+                self.assertLess(keys.index("data_gaps"), keys.index("cause_id"))
+
+    def test_reformat_reorders_keys_and_refreshes_prompt_without_changing_content(self):
+        old_label = {"cause_id": "RF-24-001", "confidence": "high", "evidence": [{"field_path": "x"}],
+                     "affected_bands": ["2.4GHz"], "remediation": ["r"], "data_gaps": [],
+                     "ranked_alternatives": [{"cause_id": "RF-24-002", "confidence": "low"}]}
+        rec = {"messages": [{"role": "system", "content": "old prompt"},
+                            {"role": "user", "content": "{}"},
+                            {"role": "assistant", "content": json.dumps(old_label)}],
+               "meta": {"kind": "single"}}
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "x.jsonl"
+            p.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+            self.assertEqual(generate.reformat_file(p), 1)
+            out = _read(p)[0]
+        new_label = json.loads(out["messages"][2]["content"])
+        self.assertEqual(new_label, old_label)  # same content
+        self.assertEqual(tuple(new_label), generate.LABEL_ORDER)
+        self.assertEqual(out["messages"][0]["content"], generate.DIAGNOSIS_SYSTEM)
+        self.assertEqual(out["messages"][1:2], rec["messages"][1:2])
+        self.assertEqual(out["meta"], rec["meta"])
 
     def test_eval_split_contains_every_kind(self):
         with tempfile.TemporaryDirectory() as d:
