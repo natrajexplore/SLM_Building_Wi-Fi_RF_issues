@@ -15,7 +15,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Iterator, Protocol
 
-from data.prompts import ASK_SYSTEM, DIAGNOSIS_SYSTEM, EXPLANATION_SYSTEM
+from data.prompts import ASK_SYSTEM, DIAGNOSIS_PROMPTS, EXPLANATION_SYSTEM
 from data.taxonomy_loader import all_cause_ids, cause as get_cause
 from training.evaluate import extract_json
 
@@ -371,6 +371,16 @@ def _taxonomy_digest() -> str:
     return "\n".join(lines) + "\n"
 
 
+def diagnosis_system(cfg: Settings) -> str:
+    """The diagnosis system prompt version this deployment's model was trained on."""
+    try:
+        return DIAGNOSIS_PROMPTS[cfg.diagnose_prompt]
+    except KeyError:
+        raise ValueError(
+            f"RF_SLM_DIAGNOSE_PROMPT={cfg.diagnose_prompt!r}: expected one of {sorted(DIAGNOSIS_PROMPTS)}"
+        ) from None
+
+
 def run_diagnosis(snapshot: dict, backend: ModelBackend, cfg: Settings, retriever=None) -> RCAResult:
     snapshot = _clean_snapshot(snapshot)
     citations = retrieve_context(snapshot, cfg, retriever)
@@ -382,7 +392,7 @@ def run_diagnosis(snapshot: dict, backend: ModelBackend, cfg: Settings, retrieve
         + "\nCanonical RF snapshot:\n"
         + json.dumps(snapshot, indent=2, sort_keys=True)
     )
-    raw = backend.generate(DIAGNOSIS_SYSTEM, user, temperature=cfg.diagnose_temperature)
+    raw = backend.generate(diagnosis_system(cfg), user, temperature=cfg.diagnose_temperature)
     parsed = extract_json(raw)
     if parsed is None:
         raise RCAContractError("model did not return a JSON object")

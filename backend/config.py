@@ -19,6 +19,10 @@ class Settings:
     # model backend
     model_backend: str = os.environ.get("RF_SLM_BACKEND", "ollama")  # ollama | adapter | reference | stub
     diagnose_model: str = os.environ.get("RF_SLM_DIAGNOSE_MODEL", "qwen2.5:7b-instruct")
+    # Which DIAGNOSIS_PROMPTS version /diagnose sends (data/prompts.py). A
+    # fine-tuned model must get the prompt it was trained on: "v1" for the
+    # run-1 rf-slm (cause_id first), "v2" for data-v2 models and untuned ones.
+    diagnose_prompt: str = os.environ.get("RF_SLM_DIAGNOSE_PROMPT", "v2")
     explain_model: str = os.environ.get("RF_SLM_EXPLAIN_MODEL", "qwen2.5:7b-instruct")
     ollama_host: str = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 

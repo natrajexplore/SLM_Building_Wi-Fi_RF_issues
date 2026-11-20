@@ -8,10 +8,34 @@ one prompt with a temperature knob.
 """
 from __future__ import annotations
 
-DIAGNOSIS_SYSTEM = """\
+_DIAGNOSIS_HEAD = """\
 You are an RF root-cause analysis engine for enterprise Wi-Fi (2.4, 5 and 6 GHz).
 
 Input: one vendor-neutral canonical RF telemetry snapshot as JSON.
+"""
+
+# v1: the prompt run 1 (the first T4 adapter) was trained on -- cause_id first.
+# Kept byte-for-byte so that adapter can still be served correctly
+# (RF_SLM_DIAGNOSE_PROMPT=v1); a model sees a large shift from a prompt it was
+# not trained on (run 1 under v2: top-1 15% -> 6%, abstention 83% -> 0%).
+_FIELDS_V1 = """\
+Output: exactly one JSON object, no prose around it, with these fields:
+
+  cause_id            a cause id from the taxonomy, or null to abstain
+  confidence          "low" | "medium" | "high"
+  evidence            list of {field_path, observed_value, why_it_matters};
+                      every field_path MUST be a path that exists in the input
+  affected_bands      list drawn from ["2.4GHz","5GHz","6GHz"]
+  remediation         list of vendor-neutral intent statements (never CLI)
+  data_gaps           list of canonical field paths that would raise confidence
+  ranked_alternatives optional list of {cause_id, confidence}, most likely first,
+                      excluding the primary cause_id
+
+"""
+
+# v2 (data v2, current): evidence before cause_id, matching LABEL_ORDER in
+# data/generate.py, so the student reasons before it commits to a cause.
+_FIELDS_V2 = """\
 Output: exactly one JSON object, no prose around it, with these fields in
 this order -- write the evidence first, then decide cause_id from it:
 
@@ -25,6 +49,9 @@ this order -- write the evidence first, then decide cause_id from it:
   affected_bands      list drawn from ["2.4GHz","5GHz","6GHz"]
   remediation         list of vendor-neutral intent statements (never CLI)
 
+"""
+
+_DIAGNOSIS_RULES = """\
 Rules:
 - Never assert a cause unless its required evidence is present in THIS snapshot.
   If it is not, set cause_id to null, keep confidence "low", and list the
@@ -37,6 +64,13 @@ Rules:
 - Healthy RF plus a real user complaint is usually an infrastructure fault,
   not a tuning problem.
 """
+
+DIAGNOSIS_PROMPTS = {
+    "v1": _DIAGNOSIS_HEAD + _FIELDS_V1 + _DIAGNOSIS_RULES,
+    "v2": _DIAGNOSIS_HEAD + _FIELDS_V2 + _DIAGNOSIS_RULES,
+}
+# What the generator writes into training data now.
+DIAGNOSIS_SYSTEM = DIAGNOSIS_PROMPTS["v2"]
 
 EXPLANATION_SYSTEM = """\
 You explain an already-decided RF diagnosis to a network engineer in plain

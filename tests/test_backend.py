@@ -335,6 +335,30 @@ class Live(BackendTestCase):
         self.assertTrue(all(s["source"] == "demo" for s in feed["samples"][1:]))
 
 
+class DiagnosisPromptVersion(unittest.TestCase):
+    def test_default_is_v2_evidence_first(self):
+        from backend.inference import diagnosis_system
+        from data.prompts import DIAGNOSIS_SYSTEM
+
+        prompt = diagnosis_system(get_settings())
+        self.assertEqual(prompt, DIAGNOSIS_SYSTEM)
+        self.assertLess(prompt.index("  evidence "), prompt.index("  cause_id "))
+
+    def test_v1_serves_the_cause_first_prompt_run1_was_trained_on(self):
+        from backend.inference import diagnosis_system
+
+        prompt = diagnosis_system(replace(get_settings(), diagnose_prompt="v1"))
+        self.assertLess(prompt.index("  cause_id "), prompt.index("  evidence "))
+        # same rules either way; only the field list differs
+        self.assertIn("Never state a numeric regulatory", prompt)
+
+    def test_unknown_version_is_a_clear_error(self):
+        from backend.inference import diagnosis_system
+
+        with self.assertRaises(ValueError):
+            diagnosis_system(replace(get_settings(), diagnose_prompt="v9"))
+
+
 class BackendSelection(unittest.TestCase):
     def test_unknown_backend_raises(self):
         from dataclasses import replace

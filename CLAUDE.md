@@ -499,8 +499,9 @@ Do not skip ahead. Each phase gates the next.
    200-example subset, `load_best_model_at_end` on eval_loss + early stopping
    patience 3; `train.py` supports these as optional keys and validates them
    in `--dry-run`). Not yet run on a real T4. Local serving on the MX550 goes
-   through `scripts/export_ollama.py` (CPU merge → `ollama create -q q4_K_M`,
-   ~1 GB), not `RF_SLM_BACKEND=adapter` (~3 GB fp16, spills to CPU).
+   through `scripts/export_ollama.py` (CPU merge → Q8_0 GGUF via llama.cpp →
+   `ollama create`, ~1.6 GB), not `RF_SLM_BACKEND=adapter` (~3 GB fp16,
+   spills to CPU).
    **First real T4 run done (2026-11-20):** 222 steps, eval_loss 0.70 → 0.125;
    adapter in `training/out/` (git-ignored), served as Ollama `rf-slm`
    (Q8_0 GGUF, 1.6 GB). On the 64-example subset (`.local/eval/eval_sub.jsonl`)
@@ -526,6 +527,14 @@ Do not skip ahead. Each phase gates the next.
    eval 623 (eval unchanged), ~170 per cause. T4 config: 2 epochs (~334 steps),
    eval/save every 40, `max_seq_length` 1600. Colab writes to
    `MyDrive/rf-slm-out-v2`, so `--resume` can't pick up run 1's checkpoints.
+   **Prompt version must match the model.** `data/prompts.py`
+   `DIAGNOSIS_PROMPTS` keeps `v1` byte-for-byte (run 1 trained on it) and `v2`
+   (current); the backend picks one via `RF_SLM_DIAGNOSE_PROMPT` (default
+   `v2`). Run 1's `rf-slm` under v2 collapsed: top-1 15%→6%, abstention
+   83%→0%. So serve the current `rf-slm` with `RF_SLM_DIAGNOSE_PROMPT=v1`, and
+   score it with the v1 subset `.local/data_v1/eval_sub.jsonl`
+   (`.local/eval/eval_sub.jsonl` is now v2). Run 2 is blocked on Colab's
+   free GPU quota (hit 2026-11-20), not on code.
 6. **RAG corpus.** Layer built (`rag/`): corpus format, chunking, Ollama
    embeddings, ingest, retriever with band/domain/topic filters. 10 starter
    fact sheets covering what the taxonomy references, all curated and flipped

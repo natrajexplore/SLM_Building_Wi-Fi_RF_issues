@@ -152,6 +152,9 @@ class OllamaResponder:
         # explicit num_ctx Ollama's default window can cut off the ~1.5k-token
         # snapshot, and the score would measure truncation, not the model.
         self.num_ctx = int(os.environ.get("RF_SLM_OLLAMA_NUM_CTX", "8192"))
+        # An untuned model can ramble to the full 800-token cap; on a small
+        # GPU that outruns a 120 s budget, so allow a generous per-call timeout.
+        self.timeout = float(os.environ.get("RF_SLM_EVAL_TIMEOUT", "600"))
 
     def __call__(self, messages: list[dict]) -> str:
         import urllib.request
@@ -168,7 +171,7 @@ class OllamaResponder:
         req = urllib.request.Request(
             f"{self.host}/api/chat", data=body, headers={"Content-Type": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             return (json.loads(resp.read()).get("message") or {}).get("content", "")
 
 

@@ -29,3 +29,6 @@ venv/
 
 # ESP32 firmware — real secrets live here
 /hardware/esp32_rf_probe/config.h
+
+# stray lockfile from an npm command run at the repo root (no root package.json)
+/package-lock.json
