@@ -19,7 +19,10 @@ from fastapi.testclient import TestClient
 from backend import live_buffer
 from backend.config import get_settings
 from backend.deps import ask_backend_dep, backend_dep, query_store_dep, retriever_dep, settings_dep
-from backend.inference import BackendError, OllamaBackend, ReferenceBackend, StubBackend, build_backend
+from dataclasses import replace
+
+from backend.inference import (BackendError, OllamaBackend, ReferenceBackend, StubBackend,
+                               build_ask_backend, build_backend)
 from backend.main import app
 from backend.query_store import QueryStoreError
 from data import generate, scenarios
@@ -717,6 +720,31 @@ class OllamaStreaming(unittest.TestCase):
         ):
             chunks = list(backend.stream("sys", "user", temperature=0.8))
         self.assertEqual(chunks, ["Hello", " world"])
+
+    def _sent_options(self, backend, temperature):
+        """The `options` dict OllamaBackend actually POSTs to /api/chat."""
+        reply = json.dumps({"message": {"content": "ok"}}).encode()
+        resp = mock.MagicMock()
+        resp.__enter__.return_value.read.return_value = reply
+        with mock.patch("backend.inference.urllib.request.urlopen", return_value=resp) as urlopen:
+            backend.generate("sys", "user", temperature=temperature)
+        return json.loads(urlopen.call_args[0][0].data)["options"]
+
+    def test_context_window_and_reply_cap_are_sent(self):
+        backend = OllamaBackend("m", "http://localhost:11434", 5.0, num_ctx=8192, num_predict=800)
+        self.assertEqual(self._sent_options(backend, 0.15),
+                         {"temperature": 0.15, "num_ctx": 8192, "num_predict": 800})
+
+    def test_options_omitted_when_unset(self):
+        backend = OllamaBackend("m", "http://localhost:11434", 5.0)
+        self.assertEqual(self._sent_options(backend, 0.8), {"temperature": 0.8})
+
+    def test_built_backends_carry_the_configured_context_window(self):
+        cfg = get_settings()
+        for b in (build_backend(replace(cfg, model_backend="ollama")),
+                  build_ask_backend(replace(cfg, ask_backend="ollama"))):
+            self.assertEqual(b.num_ctx, cfg.ollama_num_ctx)
+            self.assertEqual(b.num_predict, cfg.generate_max_new_tokens)
 
     def test_stream_raises_backend_error_on_connection_failure(self):
         backend = OllamaBackend("qwen2.5:7b-instruct", "http://localhost:11434", 5.0)

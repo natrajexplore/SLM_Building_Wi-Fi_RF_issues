@@ -148,6 +148,10 @@ class OllamaResponder:
         self.model = model
         self.host = (os.environ.get("OLLAMA_HOST") or host).rstrip("/")
         self.temperature = temperature
+        # Same window/cap the backend sends (backend/config.py): without an
+        # explicit num_ctx Ollama's default window can cut off the ~1.5k-token
+        # snapshot, and the score would measure truncation, not the model.
+        self.num_ctx = int(os.environ.get("RF_SLM_OLLAMA_NUM_CTX", "8192"))
 
     def __call__(self, messages: list[dict]) -> str:
         import urllib.request
@@ -155,7 +159,8 @@ class OllamaResponder:
         sys_user = [m for m in messages if m["role"] != "assistant"]
         body = json.dumps(
             {"model": self.model, "stream": False,
-             "options": {"temperature": self.temperature}, "messages": sys_user}
+             "options": {"temperature": self.temperature, "num_ctx": self.num_ctx, "num_predict": 800},
+             "messages": sys_user}
         ).encode()
         req = urllib.request.Request(
             f"{self.host}/api/chat", data=body, headers={"Content-Type": "application/json"}

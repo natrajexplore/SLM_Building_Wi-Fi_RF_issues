@@ -390,14 +390,15 @@ python -m training.evaluate --responder adapter --model training/out
 
 ### Train on a Colab T4
 
-No local GPU? `training/colab_t4.ipynb` runs the whole fine-tune on a free Colab T4 using `training/qlora_config.t4.yaml` (Qwen2.5-1.5B, 4-bit, fp16, batch 1 × grad-accum 32, seq 1536).
+No local GPU? `training/colab_t4.ipynb` runs the whole fine-tune on a free Colab T4 using `training/qlora_config.t4.yaml` (Qwen2.5-1.5B, 4-bit, fp16, LoRA r=16, batch 2 × grad-accum 16, seq 1536). The preset is tuned for the T4's 16 GB rather than copied from the 8 GB one: it evaluates a fixed 200-example subset every 20 steps, keeps the **lowest eval-loss checkpoint** (`load_best_model_at_end`) rather than the last step, and stops early after 3 evals without improvement.
 
 1. Open the notebook in Colab and set **Runtime → T4 GPU**.
 2. Run the cells top to bottom. The generated datasets are git-ignored, so when prompted, upload a zip of `data/train.jsonl` and `data/eval.jsonl`.
 3. Checkpoints are written to Google Drive (`training/out` is symlinked there), so a session disconnect doesn't lose the adapter.
-4. The last cell downloads the adapter. Unzip it to `training/out/` and run the backend with `RF_SLM_BACKEND=adapter`.
+4. The last cell downloads the adapter. Unzip it so its files sit at `training/out/`.
+5. Serve it. With a GPU of 4 GB or more, `RF_SLM_BACKEND=adapter`. On a small GPU (e.g. a 2 GB MX550), merge and quantize it for Ollama first: `python scripts/export_ollama.py` (CPU, ~6 GB RAM, needs `requirements-train.txt`) creates a ~1 GB Q4_K_M model `rf-slm`. Then run with `RF_SLM_BACKEND=ollama RF_SLM_DIAGNOSE_MODEL=rf-slm`, and score it with `python -m training.evaluate --responder ollama --model rf-slm`.
 
-Expect roughly 220 optimizer steps over a few hours. After a disconnect, re-run the train cell: it passes `--resume`, which continues from the newest checkpoint saved on Drive (saved every 50 steps) and does nothing on a fresh run.
+Expect up to ~220 optimizer steps over a few hours; early stopping may end it sooner. If batch 2 OOMs, set `per_device_train_batch_size: 1` and `gradient_accumulation_steps: 32`. After a disconnect, re-run the train cell: it passes `--resume`, which continues from the newest checkpoint saved on Drive (saved every 20 steps) and does nothing on a fresh run.
 
 ---
 
@@ -407,6 +408,8 @@ Expect roughly 220 optimizer steps over a few hours. After a disconnect, re-run 
 |---|---|---|
 | `RF_SLM_BACKEND` | `ollama` | `ollama` · `adapter` (phase-5 LoRA) · `reference` (deterministic, no model) · `stub` (tests) |
 | `RF_SLM_ADAPTER_DIR` | `training/out` | LoRA adapter location when `RF_SLM_BACKEND=adapter` |
+| `RF_SLM_DIAGNOSE_MODEL` | `qwen2.5:7b-instruct` | Ollama model for `/diagnose`; `rf-slm` after `scripts/export_ollama.py` |
+| `RF_SLM_OLLAMA_NUM_CTX` | `8192` | Ollama context window sent on every request. Too small a window silently drops the oldest part of long prompts |
 | `RF_SLM_ASK_BACKEND` | `ollama` | Separate backend for `/ask` — raises on `reference` by design |
 | `RF_SLM_ASK_MODEL` | `qwen2.5:7b-instruct` | Ask model; a 0.5b model answers in ~10s but is frequently wrong |
 | `RF_SLM_TEACHER_MODEL` | — | Ollama tag used for dataset generation |

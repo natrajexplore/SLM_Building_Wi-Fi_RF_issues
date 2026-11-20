@@ -65,13 +65,20 @@ def _plan(cfg: dict, n_train: int, n_eval: int) -> str:
         f"{t['num_train_epochs']} epochs)\n"
         f"  lr              {t['learning_rate']} {t['lr_scheduler_type']}, "
         f"warmup {t['warmup_ratio']}\n"
-        f"  output_dir      {t['output_dir']}"
+        f"  eval            {eval_subset_size(cfg, n_eval)} examples every {t['eval_steps']} steps\n"
+        f"  checkpoint      "
+        + (f"best by {t.get('metric_for_best_model', 'eval_loss')}"
+           + (f", early stop after {t['early_stopping_patience']} evals w/o improvement"
+              if t.get("early_stopping_patience") else "")
+           if t.get("load_best_model_at_end") else "last step")
+        + f"\n  output_dir      {t['output_dir']}"
     )
 
 
 def dry_run(cfg: dict) -> int:
     train = read_chat_jsonl(REPO / cfg["data"]["train_file"])
     eval_ = read_chat_jsonl(REPO / cfg["data"]["eval_file"])
+    selection_kwargs(cfg["training"])  # fail here, not hours into a GPU run
     print("QLoRA dry run — config and dataset OK\n")
     print(_plan(cfg, len(train), len(eval_)))
 
@@ -89,6 +96,39 @@ def dry_run(cfg: dict) -> int:
     print("-" * 60)
     print("\nconfig + data OK. on the GPU box:  python -m training.train")
     return 0
+
+
+def eval_subset_size(cfg: dict, n_eval: int) -> int:
+    """How many eval examples the trainer scores at each eval step."""
+    cap = cfg["data"].get("eval_max_samples")
+    return n_eval if not cap else min(int(cap), n_eval)
+
+
+def selection_kwargs(t: dict) -> dict:
+    """Best-checkpoint selection args for SFTConfig, from optional config keys.
+
+    With load_best_model_at_end the adapter saved at the end is the one with
+    the lowest eval loss, not whatever the last step produced -- on ~2.4k
+    narrow examples over 3 epochs, the last checkpoint is often the overfit
+    one. Early stopping needs this on (it reads the same metric), so asking for
+    patience without it is a config error rather than a silent no-op.
+    """
+    best = bool(t.get("load_best_model_at_end", False))
+    if t.get("early_stopping_patience") and not best:
+        raise SystemExit("early_stopping_patience requires load_best_model_at_end: true")
+    if not best:
+        return {}
+    if t["save_strategy"] != t["eval_strategy"] or t["save_steps"] % t["eval_steps"]:
+        raise SystemExit(
+            "load_best_model_at_end needs save_strategy == eval_strategy and "
+            "save_steps a multiple of eval_steps"
+        )
+    metric = t.get("metric_for_best_model", "eval_loss")
+    return {
+        "load_best_model_at_end": True,
+        "metric_for_best_model": metric,
+        "greater_is_better": not metric.endswith("loss"),
+    }
 
 
 def find_checkpoint(output_dir: str | Path) -> Path | None:
@@ -141,10 +181,15 @@ def train(cfg: dict, resume: bool = False) -> int:
             [{"messages": r["messages"]} for r in read_chat_jsonl(REPO / path)]
         )
 
+    t = cfg["training"]
     train_ds = to_ds(cfg["data"]["train_file"])
     eval_ds = to_ds(cfg["data"]["eval_file"])
-
-    t = cfg["training"]
+    # In-training eval only steers checkpoint selection / early stopping, so a
+    # fixed seeded subset is enough and keeps frequent evals cheap. The full
+    # eval set is still scored afterwards by training/evaluate.py.
+    eval_n = eval_subset_size(cfg, len(eval_ds))
+    if eval_n < len(eval_ds):
+        eval_ds = eval_ds.shuffle(seed=t["seed"]).select(range(eval_n))
     # trl>=1.0's SFTConfig (via transformers>=5's TrainingArguments) dropped
     # warmup_ratio entirely -- only warmup_steps remains. Convert here so the
     # config file can keep expressing warmup as a ratio.
@@ -175,7 +220,13 @@ def train(cfg: dict, resume: bool = False) -> int:
         # trl masks everything up to the last assistant turn when given chat data
         assistant_only_loss=cfg["data"].get("mask_prompt", True),
         packing=False,
+        **selection_kwargs(t),
     )
+    callbacks = []
+    if t.get("early_stopping_patience"):
+        from transformers import EarlyStoppingCallback
+
+        callbacks.append(EarlyStoppingCallback(early_stopping_patience=t["early_stopping_patience"]))
     trainer = SFTTrainer(
         model=model,
         args=sft,
@@ -183,6 +234,7 @@ def train(cfg: dict, resume: bool = False) -> int:
         eval_dataset=eval_ds,
         peft_config=lora,
         processing_class=tokenizer,
+        callbacks=callbacks,
     )
     ckpt = find_checkpoint(t["output_dir"]) if resume else None
     if resume:

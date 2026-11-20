@@ -35,6 +35,13 @@ class Settings:
     )
     adapter_base_model: str | None = os.environ.get("RF_SLM_ADAPTER_BASE") or None
     generate_max_new_tokens: int = 800
+    # Ollama context window. Left unset, Ollama uses its default window and
+    # silently drops the oldest tokens of a longer prompt -- a diagnosis prompt
+    # (system + closed vocabulary + ~1.5k-token snapshot + RAG context) or a
+    # multi-turn /ask transcript can exceed that, and the model then answers
+    # without part of its input. 8192 costs well under 1 GB of KV cache even
+    # for the 7B; lower it on a RAM-starved box.
+    ollama_num_ctx: int = int(os.environ.get("RF_SLM_OLLAMA_NUM_CTX", "8192"))
 
     # temperature, per stage — NOT a single global value
     diagnose_temperature: float = 0.15          # fixed; the API forbids overriding it

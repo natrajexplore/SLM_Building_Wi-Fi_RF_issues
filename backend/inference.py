@@ -38,15 +38,28 @@ class ModelBackend(Protocol):
 
 
 class OllamaBackend:
-    def __init__(self, model: str, host: str, timeout: float) -> None:
+    def __init__(self, model: str, host: str, timeout: float, *,
+                 num_ctx: int | None = None, num_predict: int | None = None) -> None:
         self.model = model
         self.host = host.rstrip("/")
         self.timeout = timeout
+        self.num_ctx = num_ctx
+        self.num_predict = num_predict
+
+    def _options(self, temperature: float) -> dict:
+        # temperature always comes from the caller (stage-split, see config.py);
+        # these only size the window and cap the reply.
+        opts: dict = {"temperature": temperature}
+        if self.num_ctx:
+            opts["num_ctx"] = self.num_ctx
+        if self.num_predict:
+            opts["num_predict"] = self.num_predict
+        return opts
 
     def generate(self, system: str, user: str, *, temperature: float) -> str:
         body = json.dumps({
             "model": self.model, "stream": False,
-            "options": {"temperature": temperature},
+            "options": self._options(temperature),
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
         }).encode("utf-8")
@@ -67,7 +80,7 @@ class OllamaBackend:
         which need the complete text before they can validate/format it."""
         body = json.dumps({
             "model": self.model, "stream": True,
-            "options": {"temperature": temperature},
+            "options": self._options(temperature),
             "messages": [{"role": "system", "content": system},
                          {"role": "user", "content": user}],
         }).encode("utf-8")
@@ -231,7 +244,8 @@ def build_backend(cfg: Settings) -> ModelBackend:
     if cfg.model_backend == "stub":
         return StubBackend()
     if cfg.model_backend == "ollama":
-        return OllamaBackend(cfg.diagnose_model, cfg.ollama_host, cfg.generate_timeout)
+        return OllamaBackend(cfg.diagnose_model, cfg.ollama_host, cfg.generate_timeout,
+                             num_ctx=cfg.ollama_num_ctx, num_predict=cfg.generate_max_new_tokens)
     if cfg.model_backend == "reference":
         return ReferenceBackend()
     if cfg.model_backend == "adapter":
@@ -248,7 +262,8 @@ def build_ask_backend(cfg: Settings) -> ModelBackend:
     if cfg.ask_backend == "stub":
         return StubBackend()
     if cfg.ask_backend == "ollama":
-        return OllamaBackend(cfg.ask_model, cfg.ollama_host, cfg.generate_timeout)
+        return OllamaBackend(cfg.ask_model, cfg.ollama_host, cfg.generate_timeout,
+                             num_ctx=cfg.ollama_num_ctx, num_predict=cfg.generate_max_new_tokens)
     if cfg.ask_backend == "adapter":
         return AdapterBackend(cfg)
     if cfg.ask_backend == "reference":

@@ -338,6 +338,10 @@ What actually exists:
   (needs `pip install -r requirements-dev.txt`), then add
   `--ssl-keyfile .local/certs/key.pem --ssl-certfile .local/certs/cert.pem`
   to the uvicorn command above.
+  `RF_SLM_OLLAMA_NUM_CTX` (default 8192) is sent as `num_ctx` on every Ollama
+  request, alongside `num_predict` = `generate_max_new_tokens`. Without it
+  Ollama falls back to its default window and silently drops the oldest
+  part of long prompts.
   `RF_SLM_BACKEND`: `ollama` (default), `adapter` (phase-5 LoRA), `reference`
   (deterministic, no model — good for exercising the frontend), `stub` (no
   model, tests only). Regenerate `backend/models.py` after a schema change
@@ -487,6 +491,18 @@ Do not skip ahead. Each phase gates the next.
    `warmup_ratio`→`warmup_steps`-only change in current `trl`/`transformers`.
    Resume with `python -m training.train --config training/qlora_config.8gb.yaml`
    (or the 16GB variant) the moment CUDA hardware is available.
+   **Hardware update (2026-11-20):** dev machine now has an NVIDIA MX550, 2 GB
+   VRAM (Turing, cc 7.5) + 32 GB RAM. Too small to train the 1.5B student, so
+   training stays on Colab T4 (`colab_t4.ipynb`); the user reports a prior
+   Colab run, adapter not yet copied to `training/out/`. `qlora_config.t4.yaml`
+   was retuned for the T4's 16 GB (r=16, batch 2×16, eval every 20 steps on a
+   200-example subset, `load_best_model_at_end` on eval_loss + early stopping
+   patience 3; `train.py` supports these as optional keys and validates them
+   in `--dry-run`). Not yet run on a real T4. Local serving on the MX550 goes
+   through `scripts/export_ollama.py` (CPU merge → `ollama create -q q4_K_M`,
+   ~1 GB), not `RF_SLM_BACKEND=adapter` (~3 GB fp16, spills to CPU). The
+   project `.venv` points to a Python from an old Windows user profile and
+   needs recreating.
 6. **RAG corpus.** Layer built (`rag/`): corpus format, chunking, Ollama
    embeddings, ingest, retriever with band/domain/topic filters. 10 starter
    fact sheets covering what the taxonomy references, all curated and flipped

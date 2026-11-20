@@ -1,21 +1,25 @@
-# QLoRA preset for a Colab T4 (16 GB, Turing). Same as qlora_config.8gb.yaml but fp16 instead of bf16.
+# QLoRA preset for a Colab T4 (16 GB, Turing -> fp16, no bf16), tuned for
+# quality rather than copied from the 8 GB preset.
 #
-#   python -m training.train --config training/qlora_config.t4.yaml
+#   python -m training.train --dry-run --config training/qlora_config.t4.yaml
+#   python -m training.train --config training/qlora_config.t4.yaml --resume
 #
-# Differences from qlora_config.yaml, all to cut peak VRAM:
-#   - per_device_train_batch_size 1 (was 4); grad-accum 32 keeps the effective
-#     batch at 32, so the optimisation is identical, just slower per step.
-#   - LoRA r/alpha halved to 8/16 — small memory + compute saving; for a task
-#     this narrow the quality cost is negligible.
-#   - max_seq_length 1536 — the longest real example is 1528 tokens, so nothing
-#     is truncated, and shorter sequences are the biggest single VRAM lever.
-#   - eval batch pinned to 1 as well.
-#
-# Expected peak: ~6-7 GB. If you still OOM, drop max_seq_length to 1280 (loses
-# ~2% of examples' tails) or set gradient_checkpointing already-on / lower r to 4.
-#
-# TURING CARDS (T4, RTX 20xx): they have no bf16. Set bf16:false, and
-# bnb_4bit_compute_dtype: "float16". Ampere and newer (RTX 30xx/40xx) keep bf16.
+# What changed vs the 8 GB preset, and why:
+#   - LoRA r/alpha 16/32 (was 8/16). The T4 has the headroom, and the student
+#     has to learn both the strict output contract and fine discriminations
+#     between confusable causes -- more adapter capacity helps the second.
+#   - batch 2 x grad-accum 16 (was 1 x 32). Same effective batch 32, so the
+#     optimisation is unchanged; fewer micro-steps -> noticeably faster.
+#     Expected peak ~8-10 GB. If it OOMs, go back to 1 x 32.
+#   - eval + save every 20 steps (was 50 -> only ~4 evals in ~222 steps), on a
+#     fixed 200-example eval subset so frequent evals stay cheap. The full
+#     623-example set is still scored by training/evaluate.py afterwards.
+#   - load_best_model_at_end on eval_loss + early stopping (patience 3). The
+#     adapter written to output_dir is the lowest-eval-loss checkpoint, not
+#     the last step; 3 epochs on ~2.4k narrow examples can overfit by the end.
+#   - warmup 5% (was 3%): with LoRA r=16 the first steps are a bit noisier.
+#   - max_seq_length stays 1536: the longest example is 1528 tokens, so
+#     nothing is truncated.
 
 base_model: "Qwen/Qwen2.5-1.5B-Instruct"
 
@@ -24,6 +28,7 @@ data:
   eval_file: "data/eval.jsonl"
   max_seq_length: 1536
   mask_prompt: true
+  eval_max_samples: 200                  # in-training eval subset (seeded)
 
 quantization:
   load_in_4bit: true
@@ -32,8 +37,8 @@ quantization:
   bnb_4bit_compute_dtype: "float16"      # T4 is Turing: no bf16
 
 lora:
-  r: 8
-  alpha: 16
+  r: 16
+  alpha: 32
   dropout: 0.05
   bias: "none"
   task_type: "CAUSAL_LM"
@@ -49,19 +54,22 @@ lora:
 training:
   output_dir: "training/out"
   num_train_epochs: 3
-  per_device_train_batch_size: 1
-  per_device_eval_batch_size: 1
-  gradient_accumulation_steps: 32        # effective batch 32, same as the default config
+  per_device_train_batch_size: 2
+  per_device_eval_batch_size: 2
+  gradient_accumulation_steps: 16        # effective batch 32
   learning_rate: 2.0e-4
   lr_scheduler_type: "cosine"
-  warmup_ratio: 0.03
+  warmup_ratio: 0.05
   weight_decay: 0.0
   logging_steps: 10
   eval_strategy: "steps"
-  eval_steps: 50
+  eval_steps: 20
   save_strategy: "steps"
-  save_steps: 50
-  save_total_limit: 3
+  save_steps: 20
+  save_total_limit: 3                    # the best checkpoint is always kept on top of this
+  load_best_model_at_end: true
+  metric_for_best_model: "eval_loss"
+  early_stopping_patience: 3             # stop after 3 evals (60 steps) with no improvement
   bf16: false                            # T4 is Turing: no bf16 (train.py then sets fp16)
   gradient_checkpointing: true
   optim: "paged_adamw_8bit"

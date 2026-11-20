@@ -16,6 +16,22 @@ _TRAINING = Path(__file__).resolve().parent.parent / "training"
 _CFG = _TRAINING / "qlora_config.yaml"
 
 
+class OllamaExportModelfileTests(unittest.TestCase):
+    def test_modelfile_uses_chatml_and_never_pins_temperature(self):
+        import importlib.util
+
+        path = _TRAINING.parent / "scripts" / "export_ollama.py"
+        spec = importlib.util.spec_from_file_location("export_ollama", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)  # module level imports stdlib only
+        mf = mod.modelfile(8192)
+        self.assertIn("<|im_start|>{{ .Role }}", mf)
+        self.assertIn('PARAMETER stop "<|im_end|>"', mf)
+        self.assertIn("PARAMETER num_ctx 8192", mf)
+        # temperature is stage-split and sent per request (CLAUDE.md decision #3)
+        self.assertNotIn("temperature", mf)
+
+
 class ConfigTests(unittest.TestCase):
     def test_config_loads_with_required_keys(self):
         cfg = train.load_config(_CFG)
@@ -31,6 +47,38 @@ class ConfigTests(unittest.TestCase):
             eff = t["per_device_train_batch_size"] * t["gradient_accumulation_steps"]
             self.assertEqual(eff, 32, f"{path.name}: effective batch {eff} != 32")
             self.assertLessEqual(cfg["data"]["max_seq_length"], 4096)
+
+    def test_shipped_configs_pass_checkpoint_selection_validation(self):
+        for path in sorted(_TRAINING.glob("qlora_config*.yaml")):
+            train.selection_kwargs(train.load_config(path)["training"])  # raises on misconfig
+
+    def test_t4_preset_selects_best_checkpoint_by_eval_loss(self):
+        t = train.load_config(_TRAINING / "qlora_config.t4.yaml")["training"]
+        kw = train.selection_kwargs(t)
+        self.assertTrue(kw["load_best_model_at_end"])
+        self.assertEqual(kw["metric_for_best_model"], "eval_loss")
+        self.assertFalse(kw["greater_is_better"])
+
+    def test_selection_off_by_default(self):
+        t = {"save_strategy": "steps", "eval_strategy": "steps", "save_steps": 50, "eval_steps": 50}
+        self.assertEqual(train.selection_kwargs(t), {})
+
+    def test_early_stopping_without_best_model_is_rejected(self):
+        t = {"save_strategy": "steps", "eval_strategy": "steps", "save_steps": 50,
+             "eval_steps": 50, "early_stopping_patience": 3}
+        with self.assertRaises(SystemExit):
+            train.selection_kwargs(t)
+
+    def test_best_model_needs_save_steps_multiple_of_eval_steps(self):
+        t = {"save_strategy": "steps", "eval_strategy": "steps", "save_steps": 30,
+             "eval_steps": 20, "load_best_model_at_end": True}
+        with self.assertRaises(SystemExit):
+            train.selection_kwargs(t)
+
+    def test_eval_subset_size(self):
+        self.assertEqual(train.eval_subset_size({"data": {}}, 623), 623)
+        self.assertEqual(train.eval_subset_size({"data": {"eval_max_samples": 200}}, 623), 200)
+        self.assertEqual(train.eval_subset_size({"data": {"eval_max_samples": 900}}, 623), 623)
 
     def test_8gb_preset_is_lower_footprint_than_default(self):
         default = train.load_config(_CFG)

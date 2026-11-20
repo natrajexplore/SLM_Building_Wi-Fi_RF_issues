@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -139,6 +140,10 @@ class Retriever:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Corpus text carries §, ≤, · etc.; a Windows cp1252 console can't encode
+    # them and print() would crash mid-result.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("query")
     ap.add_argument("--k", type=int, default=4)
